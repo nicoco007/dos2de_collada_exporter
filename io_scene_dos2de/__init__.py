@@ -15,6 +15,11 @@
 #
 # ##### END GPL LICENSE BLOCK #####
 
+if "bpy" in locals():
+    import importlib
+    if "export_dae" in locals():
+        importlib.reload(export_dae) # noqa
+
 import bpy
 import bmesh
 import os
@@ -37,20 +42,15 @@ from . import export_dae
 bl_info = {
     "name": "Divinity Collada Exporter",
     "author": "LaughingLeader",
-    "blender": (2, 7, 9),
-    "api": 38691,
+    "blender": (3, 6, 0),
     "location": "File > Import-Export",
     "description": ("Export Collada/Granny files for Divinity: Original Sin 2 - Definitive Edition."),
     "warning": "",
-    "wiki_url": (""),
+    "doc_url": "",
     "tracker_url": "",
     "support": "COMMUNITY",
-    "category": "Import-Export"}
-
-if "bpy" in locals():
-    import imp
-    if "export_dae" in locals():
-        imp.reload(export_dae) # noqa
+    "category": "Import-Export"
+}
 
 gr2_extra_flags = (
     ("DISABLED", "Disabled", ""),
@@ -60,75 +60,26 @@ gr2_extra_flags = (
     ("RIGIDCLOTH", "Rigid&Cloth", "For meshes lacking an armature modifier that also contain cloth physics. Typically used for weapons")
 )
 
-class ExportProgressProperties(PropertyGroup):
-    progress_total = IntProperty(name="Progress Total", options={"HIDDEN"})
-    progress_message = StringProperty(name="Progress Message", options={"HIDDEN"}, default="{}{}")
-    progress_finished = BoolProperty(options={"HIDDEN"})
-    progress_display_text = StringProperty(name="Progress Message", options={"HIDDEN"}, default="")
-
-    def update_progress_text(self, context):
-        if self.progress_total > 0:
-            if self.progress_finished == False:
-                self.progress_display_text = self.progress_message.format(self.progress_current, self.progress_total)
-            else:
-                self.progress_display_text = self.progress_message
-        else:
-            self.progress_display_text = ""
-        
-        #print("Updated progress? {}".format(self.progress_display_text))
-
-    progress_current = IntProperty(name="Current Progress", options={"HIDDEN"}, update=update_progress_text)
-
 def report(op, msg, reportType="WARNING"):
     op.report(set((reportType, )), msg)
     print("{} ({})".format(msg, reportType))
 
-def start_progress(total, text=''):
-    return
-    progress = bpy.context.scene.daefileprogress
-    progress.progress_current = 0
-    progress.progress_total = total
-    progress.progress_finished = False
-
-    if text != "":
-        progress.progress_message = text
-    else:
-        progress.progress_message = "Processing... {}/{}"
-
-def update_progress(inc, text=""):
-    return
-    progress = bpy.context.scene.daefileprogress
-    if progress.progress_finished == False:
-        progress.progress_current += inc
-        if progress.progress_current > progress.progress_total:
-            progress.progress_finished = True
-
-    if text != "":
-        progress.progress_message = text
-
-def finish_progress(text=""):
-    return
-    progress = bpy.context.scene.daefileprogress
-    progress.progress_finished = True
-    if text != "":
-        progress.progress_message = text
-
-def draw_file_progress(self, context):
-    self.layout.prop(bpy.context.scene.daefileprogress, "progress_display_text", emboss=False, text="", expand=True)
+def get_prefs(context):
+    return context.preferences.addons["io_scene_dos2de"].preferences
 
 class ProjectData(PropertyGroup):
-    project_folder = StringProperty(
+    project_folder: StringProperty(
         name="Project Folder",
         description="The root folder where .blend files are stored"
     )
-    export_folder = StringProperty(
+    export_folder: StringProperty(
         name="Export Folder",
         description="The root export folder"
     )
 
 class ProjectEntry(PropertyGroup):
-    project_data = CollectionProperty(type=ProjectData)
-    index = IntProperty()
+    project_data: CollectionProperty(type=ProjectData)
+    index: IntProperty()
 
 class DIVINITYEXPORTER_OT_add_project(Operator):
     bl_idname = "divinityexporter.add_project"
@@ -136,9 +87,7 @@ class DIVINITYEXPORTER_OT_add_project(Operator):
     bl_description = "Add an entry to the project list"
 
     def execute(self, context):
-        user_preferences = context.user_preferences
-        addon_prefs = user_preferences.addons["io_scene_dos2de"].preferences
-        project = addon_prefs.projects.project_data.add()
+        get_prefs(context).projects.project_data.add()
         return {'FINISHED'}
 
 class DIVINITYEXPORTER_OT_remove_project(Operator):
@@ -146,14 +95,13 @@ class DIVINITYEXPORTER_OT_remove_project(Operator):
     bl_label = "Remove"
     bl_description = "Remove Project"
 
-    selected_project = CollectionProperty(type=ProjectData)
+    selected_project: CollectionProperty(type=ProjectData)
 
     def set_selected(self, item):
         selected_project = item
 
     def execute(self, context):
-        user_preferences = context.user_preferences
-        addon_prefs = user_preferences.addons["io_scene_dos2de"].preferences
+        addon_prefs = get_prefs(context)
 
         i = 0
         for project in addon_prefs.projects.project_data:
@@ -166,7 +114,7 @@ class DIVINITYEXPORTER_OT_remove_project(Operator):
 
         return {'FINISHED'}
 
-class DIVINITYEXPORTER_UI_project_list(UIList):
+class DIVINITYEXPORTER_UL_project_list(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname):
         if self.layout_type in {'DEFAULT', 'COMPACT'}:
             layout.prop(item, "project_folder", text="Project Folder")
@@ -184,18 +132,18 @@ class DIVINITYEXPORTER_UI_project_list(UIList):
 class DIVINITYEXPORTER_AddonPreferences(AddonPreferences):
     bl_idname = "io_scene_dos2de"
 
-    lslib_path = StringProperty(
+    lslib_path: StringProperty(
         name="Divine Path",
         description="The path to divine.exe, used to convert from dae to gr2",
         subtype='FILE_PATH',
     )
-    gr2_default_enabled = BoolProperty(
+    gr2_default_enabled: BoolProperty(
         name="Convert to GR2 by Default",
         default=True,
         description="Models will be converted to gr2 by default if the Divine Path is set"
     )
 
-    default_preset = EnumProperty(
+    default_preset: EnumProperty(
         name="Default Preset",
         description="The default preset to load when the exporter is opened for the first time",
         items=(("NONE", "None", ""),
@@ -205,19 +153,13 @@ class DIVINITYEXPORTER_AddonPreferences(AddonPreferences):
         default=("NONE")
     )
 
-    auto_export_subfolder = BoolProperty(
+    auto_export_subfolder: BoolProperty(
         name="Use Preset Type for Project Export Subfolder",
         description="If enabled, the export subfolder will be determined by the preset type set.\nFor instance, Models go into \Models",
         default=False
     )
 
-    #projects = CollectionProperty(
-    #    type=ExportColladaProjectPaths,
-    #    name="Projects",
-    #    description="Project pathways to auto-detect when exporting"
-    #)
-
-    projects = PointerProperty(
+    projects: PointerProperty(
         type=ProjectEntry,
         name="Projects",
         description="Project pathways to auto-detect when exporting"
@@ -232,56 +174,56 @@ class DIVINITYEXPORTER_AddonPreferences(AddonPreferences):
         layout.prop(self, "auto_export_subfolder")
 
         layout.separator()
-        layout.label("Projects")
-        layout.template_list("DIVINITYEXPORTER_UI_project_list", "", self.projects, "project_data", self.projects, "index")
+        layout.label(text="Projects")
+        layout.template_list("DIVINITYEXPORTER_UL_project_list", "", self.projects, "project_data", self.projects, "index")
         layout.operator("divinityexporter.add_project")
 
 class GR2_ExportSettings(PropertyGroup):
     """GR2 Export Options"""
 
-    extras = EnumProperty(
+    extras: EnumProperty(
         name="Flag",
         description="Flag every mesh with the selected flag.\nNote: Custom Properties on a mesh will override this",
         items=gr2_extra_flags,
         default=("DISABLED")
     )
-    yup_conversion = BoolProperty(
+    yup_conversion: BoolProperty(
         name="Convert to Y-Up",
         default=False
     )
-    apply_basis_transforms = BoolProperty(
+    apply_basis_transforms: BoolProperty(
         name="Apply Y-Up Transformations",
         default=False
     )
-    force_legacy = BoolProperty(
+    force_legacy: BoolProperty(
         name="Force Legacy GR2 Version Tag",
         default=False
     )
-    store_indices = BoolProperty(
+    store_indices: BoolProperty(
         name="Store Compact Tri Indices",
         default=True
     )
-    create_dummyskeleton = BoolProperty(
+    create_dummyskeleton: BoolProperty(
         name="Create Dummy Skeleton",
         default=True
     )
 
     def draw(self, context, obj):
-        obj.label("GR2 Options")
+        obj.label(text="GR2 Options")
         obj.prop(self, "yup_conversion")
         obj.prop(self, "apply_basis_transforms")
         obj.prop(self, "force_legacy")
         obj.prop(self, "store_indices")
         obj.prop(self, "create_dummyskeleton")
 
-        obj.label("Extra Properties (Global)")
+        obj.label(text="Extra Properties (Global)")
         obj.prop(self, "extras")
         #extrasobj = obj.row(align=False)
         #self.extras.draw(context, extrasobj)
 
 class Divine_ExportSettings(PropertyGroup):
     """Divine GR2 Conversion Settings"""
-    gr2_settings = bpy.props.PointerProperty(
+    gr2_settings: bpy.props.PointerProperty(
         type=GR2_ExportSettings,
         name="GR2 Export Options"
     )
@@ -293,111 +235,111 @@ class Divine_ExportSettings(PropertyGroup):
         ("dos2de", "DOS2DE", "Divinity: Original Sin 2 - Definitive Edition")
     )
 
-    game = EnumProperty(
+    game: EnumProperty(
         name="Game",
         description="The target game. Currently determines the model format type",
         items=game_enums,
         default=("dos2de")
     )
 
-    delete_collada = BoolProperty(
+    delete_collada: BoolProperty(
         name="Delete Exported Collada File",
         default=True,
         description="The resulting .dae file will be deleted after being converted to gr2"
     )
 
-    xflip_skeletons = BoolProperty(
+    xflip_skeletons: BoolProperty(
         name="X-Flip Skeletons",
         default=False
     )
-    xflip_meshes = BoolProperty(
+    xflip_meshes: BoolProperty(
         name="X-Flip Meshes",
         default=False
     )
 
-    flip_uvs = BoolProperty(
+    flip_uvs: BoolProperty(
         name="Flip UVs",
         default=True
     )
-    filter_uvs = BoolProperty(
+    filter_uvs: BoolProperty(
         name="Filter UVs",
         default=False
     )
-    ignore_uv_nan = BoolProperty(
+    ignore_uv_nan: BoolProperty(
         name="Ignore Bad NaN UVs",
         description="Ignore bad/unwrapped UVs that fail to form a triangle. Export will fail if these are detected",
         default=False
     )
-    export_normals = BoolProperty(
+    export_normals: BoolProperty(
         name="Export Normals",
         default=True
     )
-    export_tangents = BoolProperty(
+    export_tangents: BoolProperty(
         name="Export Tangent/Bitangent",
         default=True
     )
-    export_uvs = BoolProperty(
+    export_uvs: BoolProperty(
         name="Export UVs",
         default=True
     )
-    export_colors = BoolProperty(
+    export_colors: BoolProperty(
         name="Export Colors",
         default=True
     )
-    deduplicate_vertices = BoolProperty(
+    deduplicate_vertices: BoolProperty(
         name="Deduplicate Vertices",
         default=True
     )
-    deduplicate_uvs = BoolProperty(
+    deduplicate_uvs: BoolProperty(
         name="Deduplicate UVs",
         default=True
     )
-    recalculate_normals = BoolProperty(
+    recalculate_normals: BoolProperty(
         name="Recalculate Normals",
         default=False
     )
-    recalculate_tangents = BoolProperty(
+    recalculate_tangents: BoolProperty(
         name="Recalculate Tangent/Bitangent",
         default=False
     )
-    recalculate_iwt = BoolProperty(
+    recalculate_iwt: BoolProperty(
         name="Recalculate Inverse World Transforms",
         default=False
     )
 
-    keep_bind_info = BoolProperty(
+    keep_bind_info: BoolProperty(
 		name="Keep Bind Info",
 		description="Store Bindpose information in custom bone properties for later use during Collada export",
 		default=True)
 
-    navigate_to_blendfolder = BoolProperty(default=False)
+    navigate_to_blendfolder: BoolProperty(default=False)
 
     drawable_props = [
-            "xflip_skeletons",
-            "xflip_meshes",
-            "flip_uvs",
-            "filter_uvs",
-            "ignore_uv_nan",
-            "export_normals",
-            "export_tangents",
-            "export_uvs",
-            "export_colors",
-            "deduplicate_vertices",
-            "deduplicate_uvs",
-            "recalculate_normals",
-            "recalculate_tangents",
-            "recalculate_iwt"
-            ]
+        "xflip_skeletons",
+        "xflip_meshes",
+        "flip_uvs",
+        "filter_uvs",
+        "ignore_uv_nan",
+        "export_normals",
+        "export_tangents",
+        "export_uvs",
+        "export_colors",
+        "deduplicate_vertices",
+        "deduplicate_uvs",
+        "recalculate_normals",
+        "recalculate_tangents",
+        "recalculate_iwt"
+    ]
 
 
     def draw(self, context, obj):
         obj.prop(self, "game")
-        obj.label("GR2 Export Settings")
+        obj.label(text="GR2 Export Settings")
         gr2box = obj.box()
         self.gr2_settings.draw(context, gr2box)
 
         #col = obj.column(align=True)
-        obj.label("Export Options")
+        obj.label(text="Export Options")
         for prop in self.drawable_props:
             obj.prop(self, prop)
 
@@ -407,63 +349,63 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
     bl_label = "Export Divinity DAE"
     bl_options = {"PRESET", "REGISTER", "UNDO"}
 
-    filename_ext = StringProperty(
+    filename_ext: StringProperty(
         name="File Extension",
         options={"HIDDEN"},
         default=".dae"
     )
 
-    filter_glob = StringProperty(default="*.dae;*.gr2", options={"HIDDEN"})
+    filter_glob: StringProperty(default="*.dae;*.gr2", options={"HIDDEN"})
     
-    filename = StringProperty(
+    filename: StringProperty(
         name="File Name",
         options={"HIDDEN"}
     )
-    directory = StringProperty(
+    directory: StringProperty(
         name="Directory",
         options={"HIDDEN"}
     )
 
-    export_directory = StringProperty(
+    export_directory: StringProperty(
         name="Project Export Directory",
         default="",
         options={"HIDDEN"}
     )
 
-    use_metadata = BoolProperty(
+    use_metadata: BoolProperty(
         name="Use Metadata",
         default=True,
         options={"HIDDEN"}
         )
 
-    auto_determine_path = BoolProperty(
+    auto_determine_path: BoolProperty(
         default=True,
         name="Auto-Path",
         description="Automatically determine the export path"
         )
 
-    update_path = BoolProperty(
+    update_path: BoolProperty(
         default=False,
         options={"HIDDEN"}
         )
         
-    auto_filepath = StringProperty(
+    auto_filepath: StringProperty(
         name="Auto Filepath",
         default="",
         options={"HIDDEN"}
         )     
         
-    last_filepath = StringProperty(
+    last_filepath: StringProperty(
         name="Last Filepath",
         default="",
         options={"HIDDEN"}
         )
 
-    initialized = BoolProperty(default=False)
-    update_path_next = BoolProperty(default=False)
-    log_message = StringProperty(options={"HIDDEN"})
+    initialized: BoolProperty(default=False)
+    update_path_next: BoolProperty(default=False)
+    log_message: StringProperty(options={"HIDDEN"})
 
-    gr2_default_enabled_ignore = BoolProperty(default=False, options={"HIDDEN"})
+    gr2_default_enabled_ignore: BoolProperty(default=False, options={"HIDDEN"})
 
     def build_gr2_options(self):
         export_str = ""
@@ -527,9 +469,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         if self.filepath != "" and self.last_filepath == "":
             self.last_filepath = self.filepath
 
-        user_preferences = context.user_preferences
-        addon_prefs = user_preferences.addons["io_scene_dos2de"].preferences
-
         next_path = ""
 
         if self.filepath != "":
@@ -550,7 +489,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                         armature = obj
                 elif self.use_export_selected:
                     for obj in context.scene.objects:
-                        if obj.select and obj.type == "ARMATURE":
+                        if obj.select_get() and obj.type == "ARMATURE":
                             armature = obj
                             break
                 else:
@@ -571,7 +510,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             elif self.auto_name == "DISABLED" and self.last_filepath != "":
                 self.auto_filepath = self.last_filepath
 
-        if self.auto_determine_path == True and addon_prefs.auto_export_subfolder == True and self.export_directory != "":
+        if self.auto_determine_path == True and get_prefs(context).auto_export_subfolder == True and self.export_directory != "":
             auto_directory = self.export_directory
             if self.selected_preset != "NONE":
                 if self.selected_preset == "MODEL":
@@ -599,36 +538,36 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         return
  
-    misc_settings_visible = BoolProperty(
+    misc_settings_visible: BoolProperty(
         name="Misc Settings",
         default=False,
         options={"HIDDEN"}
     )
 
-    convert_gr2 = BoolProperty(
+    convert_gr2: BoolProperty(
         name="Convert to GR2",
         default=False
     )
 
-    extra_data_disabled = BoolProperty(
+    extra_data_disabled: BoolProperty(
         name="Disable Extra Data",
         default=False
     )
 
-    convert_gr2_options_visible = BoolProperty(
+    convert_gr2_options_visible: BoolProperty(
         name="GR2 Options",
         default=False,
         options={"HIDDEN"}
     )
 
-    divine_settings = bpy.props.PointerProperty(
+    divine_settings: bpy.props.PointerProperty(
         type=Divine_ExportSettings,
         name="GR2 Settings"
     )
 
     # List of operator properties, the attributes will be assigned
     # to the class instance from the operator settings before calling
-    object_types = EnumProperty(
+    object_types: EnumProperty(
         name="Object Types",
         options={"ENUM_FLAG"},
         items=(
@@ -641,18 +580,18 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         default={"ARMATURE", "MESH", "MATERIAL", "EMPTY", "MESH", "CURVE"}
     )
 
-    use_export_selected = BoolProperty(
+    use_export_selected: BoolProperty(
         name="Selected Only",
         description="Export only selected objects (and visible in active "
                     "layers if that applies)",
         default=False
         )
 
-    use_export_visible = BoolProperty(
+    use_export_visible: BoolProperty(
         name="Visible Only",
         description="Export only visible, unhidden, selectable objects",
         default=True
-        )
+    )
 
     yup_rotation_options = (
         ("DISABLED", "Disabled", ""),
@@ -660,17 +599,17 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         ("ACTION", "Flag", "Flag the object as being y-up without rotating it")
     )
 
-    xflip_armature = BoolProperty(
+    xflip_armature: BoolProperty(
         name="X-Flip Armature",
         description="Flips the armature on the x-axis",
         default=False
         )
-    xflip_mesh = BoolProperty(
+    xflip_mesh: BoolProperty(
         name="X-Flip Mesh",
         description="Flips meshes on the x-axis (DOS2/granny x-flips everything for some reason)",
         default=False
         )
-    auto_name = EnumProperty(
+    auto_name: EnumProperty(
         name="Auto-Name",
         description="Auto-generate a filename based on a property name",
         items=(("DISABLED", "Disabled", ""),
@@ -679,88 +618,83 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         default=("DISABLED"),
         update=update_filepath
         )
-    use_mesh_modifiers = BoolProperty(
+    use_mesh_modifiers: BoolProperty(
         name="Apply Modifiers",
         description="Apply modifiers to mesh objects (on a copy!)",
         default=True
         )
-    use_exclude_armature_modifier = BoolProperty(
+    use_exclude_armature_modifier: BoolProperty(
         name="Exclude Armature Modifier",
         description="Exclude the armature modifier when applying modifiers "
                       "(otherwise animation will be applied on top of the last pose)",
         default=True
         )
-    use_normalize_vert_groups = BoolProperty(
+    use_normalize_vert_groups: BoolProperty(
         name="Normalize Vertex Groups",
         description="Normalize all vertex groups",
         default=True
         )
-    use_limit_total = BoolProperty(
+    use_limit_total: BoolProperty(
         name="Limit Total",
         description="Limit total vertex influences to 4 (GR2 requirement)",
-        default=False
+        default=True
         )
-    use_rest_pose = BoolProperty(
+    use_rest_pose: BoolProperty(
         name="Use Rest Pose",
         description="Revert any armatures to their rest poses when exporting (on the copy only)",
         default=True
         )
-    use_tangent = BoolProperty(
+    use_tangent: BoolProperty(
         name="Export Tangents",
         description="Export Tangent and Binormal arrays (for normalmapping)",
-        default=False
+        default=True
         )
-    use_triangles = BoolProperty(
+    use_triangles: BoolProperty(
         name="Triangulate",
         description="Export Triangles instead of Polygons",
         default=True
         )
 
-    use_copy_images = BoolProperty(
-        name="Copy Images",
-        description="Copy Images (create images/ subfolder)",
-        default=False
-        )
-    use_active_layers = BoolProperty(
+    use_active_layers: BoolProperty(
         name="Active Layers Only",
         description="Export only objects on the active layers",
         default=True
         )
-    use_exclude_ctrl_bones = BoolProperty(
+    use_exclude_ctrl_bones: BoolProperty(
         name="Exclude Control Bones",
         description=("Exclude skeleton bones with names beginning with 'ctrl' "
                      "or bones which are not marked as Deform bones"),
         default=False
         )
-    use_anim = BoolProperty(
+    use_anim: BoolProperty(
         name="Export Animation",
         description="Export keyframe animation",
         default=False
         )
-    anim_export_all_separate = BoolProperty(
+    anim_export_all_separate: BoolProperty(
         name="Export All Actions",
         description="Export all actions as separate animation files",
         default=False
         )
-    use_anim_skip_noexp = BoolProperty(
+    use_anim_skip_noexp: BoolProperty(
         name="Skip (-noexp) Actions",
         description="Skip exporting of actions whose name end in (-noexp)"
                     " Useful to skip control animations",
         default=False
         )
-    use_anim_optimize = BoolProperty(
+    use_anim_optimize: BoolProperty(
         name="Optimize Keyframes",
         description="Remove double keyframes",
         default=False
         )
 
-    use_shape_key_export = BoolProperty(
+    use_shape_key_export: BoolProperty(
         name="Export Shape Keys",
         description="Export shape keys for selected objects",
         default=False
         )
         
-    anim_optimize_precision = FloatProperty(
+    anim_optimize_precision: FloatProperty(
         name="Precision",
         description=("Tolerence for comparing double keyframes "
                      "(higher for greater accuracy)"),
@@ -769,15 +703,15 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         default=16.0
         )
 
-    applying_preset = BoolProperty(default=False)
-    yup_local_override = BoolProperty(default=False)
+    applying_preset: BoolProperty(default=False)
+    yup_local_override: BoolProperty(default=False)
 
     def yup_local_override_save(self, context):
         if self.applying_preset is not True:
             self.yup_local_override = True
             bpy.context.scene['dos2de_yup_local_override'] = self.yup_enabled
 
-    yup_enabled = EnumProperty(
+    yup_enabled: EnumProperty(
         name="Y-Up",
         description="Converts from Z-up to Y-up",
         items=yup_rotation_options,
@@ -786,8 +720,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         )
 
     # Used to reset the global extra flag when a preset is changed
-    preset_applied_extra_flag = BoolProperty(default=False)
-    preset_last_extra_flag = EnumProperty(items=gr2_extra_flags, default=("DISABLED"))
+    preset_applied_extra_flag: BoolProperty(default=False)
+    preset_last_extra_flag: EnumProperty(items=gr2_extra_flags, default=("DISABLED"))
        
     def apply_preset(self, context):
         if self.initialized:
@@ -806,22 +740,18 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                 self.preset_applied_extra_flag = False
             return
         elif self.selected_preset == "MODEL":
-            #self.object_types = {"ARMATURE", "MESH", "MATERIAL"}
             self.object_types = {"ARMATURE", "MESH"}
 
             if self.yup_local_override is False:
                 self.yup_enabled = "ROTATE"
             self.use_normalize_vert_groups = True
-            #self.use_limit_total = True
             #self.use_rest_pose = True
-            #self.use_tangent = False
             self.use_triangles = True
             self.use_active_layers = True
             self.auto_name = "LAYER"
 
             #self.xflip_armature = False
             #self.xflip_mesh = False
-            self.use_copy_images = False
             self.use_exclude_ctrl_bones = False
             self.use_anim = False
             self.use_anim_skip_noexp = False
@@ -842,16 +772,13 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             if self.yup_local_override is False:
                 self.yup_enabled = "ROTATE"
             self.use_normalize_vert_groups = False
-            #self.use_limit_total = False
             self.use_rest_pose = False
-            self.use_tangent = False
             self.use_triangles = True
             self.use_active_layers = True
             self.auto_name = "ACTION"
 
             #self.xflip_armature = False
             #self.xflip_mesh = False
-            self.use_copy_images = False
             self.use_exclude_ctrl_bones = False
             self.use_anim = True
             self.use_anim_skip_noexp = False
@@ -870,15 +797,12 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             if self.yup_local_override is False:
                 self.yup_enabled = "ROTATE"
             self.use_normalize_vert_groups = True
-            #self.use_limit_total = True
-            self.use_tangent = False
             self.use_triangles = True
             self.use_active_layers = True
             self.auto_name = "LAYER"
 
             #self.xflip_armature = False
             #self.xflip_mesh = False
-            self.use_copy_images = False
             self.use_exclude_ctrl_bones = False
             self.use_anim = False
             self.use_anim_skip_noexp = False
@@ -897,7 +821,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         return
         #self.selected_preset = "NONE"
 
-    selected_preset = EnumProperty(
+    selected_preset: EnumProperty(
         name="Preset",
         description="Use a built-in preset",
         items=(("NONE", "None", ""),
@@ -906,14 +830,15 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                ("MODEL", "Model", "Use default model settings")),
         default=("NONE"),
         update=apply_preset
-        )
+    )
 
-    batch_mode = BoolProperty(
+    batch_mode: BoolProperty(
         name="Batch Export",
         description="Export all active layers as separate files, or every action as separate animation files",
-        default=False)
+        default=False
+    )
 
-    debug_mode = BoolProperty(default=False, options={"HIDDEN"})
+    debug_mode: BoolProperty(default=False, options={"HIDDEN"})
 
     def draw(self, context):
         layout = self.layout
@@ -965,7 +890,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         row1col3.prop(self, "use_normalize_vert_groups")
         row2col3.prop(self, "use_limit_total")
         row3col3.prop(self, "use_rest_pose")
-        row4col3.label("")
+        row4col3.label(text="")
         #if self.use_mesh_modifiers:
         
         #col = layout.column(align=True)
@@ -976,7 +901,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         box = layout.box()
         box.prop(self, "use_anim")
         if self.use_anim:
-            box.label("Animation Settings")
+            box.label(text="Animation Settings")
             if self.debug_mode:
                 box.prop(self, "anim_export_all_separate")
             box.prop(self, "use_anim_skip_noexp")
@@ -1001,7 +926,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             box = layout.box()
             box.prop(self, "use_exclude_ctrl_bones")
             box.prop(self, "use_shape_key_export")
-            box.prop(self, "use_copy_images")
             
     @property
     def check_extension(self):
@@ -1014,9 +938,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             print(self.log_message)
             report(self, "{}".format(self.log_message), "WARNING")
             self.log_message = ""
-
-        user_preferences = context.user_preferences
-        addon_prefs = user_preferences.addons["io_scene_dos2de"].preferences
 
         if self.convert_gr2 == False:
             self.gr2_default_enabled_ignore = True
@@ -1045,8 +966,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         return update
         
     def invoke(self, context, event):
-        user_preferences = context.user_preferences
-        addon_prefs = user_preferences.addons["io_scene_dos2de"].preferences
+        addon_prefs = get_prefs(context)
 
         blend_path = bpy.data.filepath
         #print("Blend path: {} ".format(blend_path))
@@ -1062,8 +982,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             if addon_prefs.default_preset != "NONE":
                 self.selected_preset = addon_prefs.default_preset
 
-        if "laughingleader_blender_helpers" in context.user_preferences.addons:
-            helper_preferences = context.user_preferences.addons["laughingleader_blender_helpers"].preferences
+        if "laughingleader_blender_helpers" in context.preferences.addons:
+            helper_preferences = context.preferences.addons["laughingleader_blender_helpers"].preferences
             if helper_preferences is not None:
                 self.debug_mode = getattr(helper_preferences, "debug_mode", False)
         #print("Preset: \"{}\"".format(self.selected_preset))
@@ -1080,7 +1000,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                                 num_meshes += 1
             elif self.use_export_selected:
                 for obj in context.scene.objects:
-                    if obj.select and obj.type == "MESH":
+                    if obj.select_get() and obj.type == "MESH":
                         num_meshes += 1
             else:
                 for obj in context.scene.objects:
@@ -1118,8 +1038,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                             print("Setting start path to export folder: \"{}\"".format(export_folder))
                             break
 
-        #bpy.types.FILEBROWSER_HT_header.append(draw_file_progress)
-
         self.update_filepath(context)
         context.window_manager.fileselect_add(self)
 
@@ -1128,14 +1046,20 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         return {'RUNNING_MODAL'}
 
     def can_modify_object(self, context, obj):
-        if self.use_export_visible and obj.hide or obj.hide_select:
+        if self.use_export_visible and obj.hide_get() or obj.hide_select:
             return False
-        if self.use_export_selected and obj.select == False:
+        if self.use_export_selected and not obj.select_get():
             return False
         if self.use_active_layers:
-            for i in range(20):
-                if context.scene.layers[i] and not obj.layers[i]:
-                    return False
+            valid = True
+            for col in obj.users_collection:
+                if col.hide_viewport == True:
+                    valid = False
+                    break
+                    
+            if not valid:
+                return False
+
         #print("[DOS2DE-Exporter] Obj '{}' can be exported".format(obj.name))
         return True
 
@@ -1163,28 +1087,28 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         count = len(merge_targets)
         if count > 1:
             top_object = merge_targets[0]
-            top_object.select = True
+            top_object.select_set(True)
 
             print("[DOS2DE-Export] Selected: {}".format(top_object.name))
 
             i = 1
             while i < count:
                 obj = merge_targets[i]
-                obj.select = True
+                obj.select_set(True)
                 if obj in modifyObjects:
                     modifyObjects.remove(obj)
                 print("[DOS2DE-Export] Selecting {} for merging with object {}".format(obj.name, top_object.name))
                 selected = True
                 i+=1
 
-            bpy.context.scene.objects.active = top_object
+            bpy.context.view_layer.objects.active = top_object
             bpy.ops.object.join()
 
             print("[DOS2DE-Export] Merged selected objects for {}".format(top_object.name))
 
             bpy.ops.object.select_all(action='DESELECT')
             merge_targets.clear()
-            top_object.select = False
+            top_object.select_set(False)
             if top_object not in modifyObjects:
                 modifyObjects.append(top_object)
         else:
@@ -1215,7 +1139,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         count = len(merge_targets)
         if count > 1:
             top_object = merge_targets[0]
-            top_object.select = True
+            top_object.select_set(True)
 
             print("[DOS2DE-Export] Selected: {}".format(top_object.name))
             extra_flag = ""
@@ -1233,7 +1157,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             while i < count:
                 obj = merge_targets[i]
                 #target_obj = next((x for x in modifyObjects if x.llexportprops.original_name == objname), None)
-                obj.select = True
+                obj.select_set(True)
                 if obj in modifyObjects:
                     modifyObjects.remove(obj)
                 print("[DOS2DE-Export] Selecting {} for merging with object {}".format(obj.name, top_object.name))
@@ -1250,7 +1174,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                         extra_flag = "rigidcloth"
                 i+=1
 
-            bpy.context.scene.objects.active = top_object
+            bpy.context.view_layer.objects.active = top_object
             bpy.ops.object.join()
 
             if extra_flag != "":
@@ -1268,7 +1192,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                 print("[DOS2DE-Export] [Error] No objects were selected for merge with {}".format(top_object.name))
             bpy.ops.object.select_all(action='DESELECT')
             merge_targets.clear()
-            top_object.select = False
+            top_object.select_set(False)
 
             if top_object not in modifyObjects:
                 modifyObjects.append(top_object)
@@ -1279,22 +1203,22 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
     def pose_apply(self, context, obj):
         last_active = getattr(bpy.context.scene.objects, "active", None)
         bpy.ops.object.select_all(action='DESELECT')
-        bpy.context.scene.objects.active = obj
-        obj.select = True
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
         bpy.ops.object.mode_set(mode="POSE")
         bpy.ops.pose.armature_apply()
-        obj.select = False
-        bpy.context.scene.objects.active = last_active
+        obj.select_set(False)
+        bpy.context.view_layer.objects.active = last_active
     
     def transform_apply(self, context, obj, location=False, rotation=False, scale=False):
         last_active = getattr(bpy.context.scene.objects, "active", None)
         bpy.ops.object.select_all(action='DESELECT')
-        bpy.context.scene.objects.active = obj
-        obj.select = True
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
         bpy.ops.object.mode_set(mode="OBJECT")
         bpy.ops.object.transform_apply(location=location, rotation=rotation, scale=scale)
-        obj.select = False
-        bpy.context.scene.objects.active = last_active
+        obj.select_set(False)
+        bpy.context.view_layer.objects.active = last_active
 
     def copy_obj(self, context, obj, parent=None):
         copy = obj.copy()
@@ -1312,7 +1236,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             copy.llexportprops.original_name = obj.name
             #copy.data.name = copy.llexportprops.export_name
 
-        context.scene.objects.link(copy)
+        context.collection.objects.link(copy)
 
         print("[DOS2DE-Export] Created a copy of object/data {} ({})".format(obj.name, copy.name))
 
@@ -1334,7 +1258,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         return copy
 
     def cancel(self, context):
-        #bpy.types.FILEBROWSER_HT_header.remove(draw_file_progress)
         pass
 
     def execute(self, context):
@@ -1343,8 +1266,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         result = ""
         
-        user_preferences = context.user_preferences
-        addon_prefs = user_preferences.addons["io_scene_dos2de"].preferences
+        addon_prefs = get_prefs(context)
 
         if bpy.context.object is not None and bpy.context.object.mode is not None:
             current_mode = bpy.context.object.mode
@@ -1352,21 +1274,21 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             current_mode = "OBJECT"
 
         activeObject = None
-        if bpy.context.scene.objects.active:
-            activeObject = bpy.context.scene.objects.active
+        if bpy.context.view_layer.objects.active:
+            activeObject = bpy.context.view_layer.objects.active
         
         targetObjects = []
         modifyObjects = []
         selectedObjects = []
         copies = []
 
-        if activeObject is not None and not activeObject.hide:
+        if activeObject is not None and not activeObject.hide_get():
             bpy.ops.object.mode_set(mode="OBJECT")
         
         for obj in context.scene.objects:
-            if obj.select:
+            if obj.select_get():
                 selectedObjects.append(obj)
-                obj.select = False
+                obj.select_set(False)
             
             if self.can_modify_object(context, obj):
                 targetObjects.append(obj)
@@ -1385,11 +1307,11 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                         copy.name, obj.parent.name)
                     report(self, msg)
                     bpy.ops.object.select_all(action='DESELECT')
-                    bpy.context.scene.objects.active = copy
-                    copy.select = True
+                    bpy.context.view_layer.objects.active = copy
+                    copy.select_set(True)
                     bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
-                    copy.select = False
-                    bpy.context.scene.objects.active = None
+                    copy.select_set(False)
+                    bpy.context.view_layer.objects.active = None
 
                 for childobj in obj.children:
                     if self.can_modify_object(context, childobj):
@@ -1433,7 +1355,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                         self.transform_apply(context, obj, rotation=True)
 
                         for childobj in obj.children:
-                            childobj.select = True
+                            childobj.select_set(True)
                             # rot_x = degrees(childobj.rotation_euler[0])
                             # if rot_x != 0:
                             #     parent_yup_applied = round(rot_x) == -90
@@ -1448,8 +1370,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                             #         print("      Rotated child {} to y-up. (x={})".format(childobj.name, degrees(childobj.rotation_euler[0])))
                             #         self.transform_apply(context, childobj, rotation=True)
 
-                        bpy.context.scene.objects.active = obj
-                        obj.select = True
+                        bpy.context.view_layer.objects.active = obj
+                        obj.select_set(True)
                         bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
                         bpy.ops.object.select_all(action='DESELECT')
                         # print(" {} Final (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
@@ -1525,21 +1447,21 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
             if obj.type == "MESH" and obj.vertex_groups:
                 if self.use_limit_total:
-                    bpy.context.scene.objects.active = obj
-                    obj.select = True
+                    bpy.context.view_layer.objects.active = obj
+                    obj.select_set(True)
                     bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
                     bpy.ops.object.vertex_group_limit_total(limit=4)
                     bpy.ops.object.mode_set(mode="OBJECT")
                     print("Limited total vertex influences to 4 for {}.".format(obj.name))
-                    obj.select = False
+                    obj.select_set(False)
                 if self.use_normalize_vert_groups:
-                    bpy.context.scene.objects.active = obj
-                    obj.select = True
+                    bpy.context.view_layer.objects.active = obj
+                    obj.select_set(True)
                     bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
                     bpy.ops.object.vertex_group_normalize_all()
                     bpy.ops.object.mode_set(mode="OBJECT")
                     print("Normalized vertex groups for {}.".format(obj.name))
-                    obj.select = False
+                    obj.select_set(False)
 
         # Merging
         # if merging_enabled:
@@ -1569,8 +1491,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                     
                     armature = next(iter(list(filter(lambda obj: obj.type == "ARMATURE", modifyObjects))), None)
                     if armature is not None:
-                        start_progress(len(bpy.data.actions), "Exporting animations to DAE... {}/{}")
-
                         for action in bpy.data.actions:
                             export_name = "{}_Anim_{}".format(armature.name, action.name)
                             if self.auto_name == "ACTION":
@@ -1585,16 +1505,12 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                                 exported_pathways.append(export_filepath)
                             else:
                                 report(self, "[DOS2DE-Exporter] Failed to export '{}'.".format(export_filepath))
-
-                            update_progress(1)
                     result = {"FINISHED"}
-                    finish_progress("All files exported.")
                 else:
                     single_mode = True
             else:
                 if self.use_active_layers:
                     progress_total = len(list(i for i in range(20) if context.scene.layers[i]))
-                    start_progress(progress_total, "Exporting layers to DAE... {}/{}")
                     for i in range(20):
                         if context.scene.layers[i]:
                             export_list = list(filter(lambda obj: obj.layers[i], modifyObjects))
@@ -1614,10 +1530,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                             else:
                                 result = {"ERROR"}
                                 report(self, "[DOS2DE-Exporter] Failed to export '{}'.".format(export_filepath))
-
-                            update_progress(1)
-                    
-                    finish_progress("All files exported.")
                 else:
                     single_mode = True
         if single_mode:
@@ -1631,7 +1543,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         for obj in copies:
             if obj is not None:
-                obj.select = True
+                obj.select_set(True)
 
         bpy.ops.object.delete(use_global=True)
 
@@ -1659,14 +1571,14 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         bpy.ops.object.select_all(action='DESELECT')
         
         for obj in selectedObjects:
-            obj.select = True
+            obj.select_set(True)
         
         if activeObject is not None:
-            bpy.context.scene.objects.active = activeObject
+            bpy.context.view_layer.objects.active = activeObject
         
         # Return to previous mode
         try:
-            if current_mode is not None and activeObject is not None and not activeObject.hide:
+            if current_mode is not None and activeObject is not None and not activeObject.hide_get():
                 if activeObject.type != "ARMATURE" and current_mode == "POSE":
                     bpy.ops.object.mode_set(mode="OBJECT")
                 else:
@@ -1677,8 +1589,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         if self.convert_gr2:
             if (addon_prefs.lslib_path is not None and addon_prefs.lslib_path != "" 
                 and os.path.isfile(addon_prefs.lslib_path)):
-                    start_progress(len(exported_pathways), "Exporting files to GR2... {}/{}")
-
                     for collada_file in exported_pathways:
                         gr2_path = str.replace(collada_file, ".dae", ".gr2")
 
@@ -1707,14 +1617,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                             if self.divine_settings.delete_collada and os.path.isfile(collada_file):
                                 print("[DOS2DE-Collada] GR2 conversion successful. Deleting temporary collada file '{}'.".format(collada_file))
                                 os.remove(collada_file)
-
-                        update_progress(1)
-                    
-                    finish_progress("All files exported.")
             else:
                 raise Exception("[DOS2DE-Collada] LSLib not found. Cannot convert to GR2.")
-        
-        #bpy.types.FILEBROWSER_HT_header.remove(draw_file_progress)
 
         return result
 
@@ -1723,7 +1627,7 @@ class DIVINITYEXPORTER_OT_set_extra_flags(Operator):
     bl_idname = "export_scene.dos2de_extraflagsop"
     bl_label = "DOS2DE Extra Flags"
 
-    flag = EnumProperty(
+    flag: EnumProperty(
         name="Flag",
         description="Set the custom export flag for this mesh",
         items=gr2_extra_flags,
@@ -1801,7 +1705,7 @@ addon_keymaps = []
 
 def draw_export_options(self, context):
     col = self.layout.column()
-    col.label("DOS2DE Collada Settings")
+    col.label(text="DOS2DE Collada Settings")
     col.operator(DIVINITYEXPORTER_OT_set_extra_flags.bl_idname)
 
 added_export_options = False
@@ -1820,16 +1724,25 @@ def leaderhelpers_register_exportdraw(scene):
             bpy.app.handlers.scene_update_post.remove(leaderhelpers_register_exportdraw)
             added_export_options = True
 
-def register():
-    bpy.utils.register_module(__name__)
-    #bpy.utils.register_class(DIVINITYEXPORTER_OT_export_collada)
-    bpy.types.INFO_MT_file_export.append(menu_func)
 
-    """ bpy.types.Scene.daefileprogress = PointerProperty(
-        name="File Export Progress",
-        description="Used to render file browser progress",
-        type=ExportProgressProperties
-    ) """
+classes = (
+    ProjectData,
+    ProjectEntry,
+    GR2_ExportSettings,
+    Divine_ExportSettings,
+    DIVINITYEXPORTER_OT_export_collada,
+    DIVINITYEXPORTER_OT_add_project,
+    DIVINITYEXPORTER_OT_remove_project,
+    DIVINITYEXPORTER_OT_set_extra_flags,
+    DIVINITYEXPORTER_UL_project_list,
+    DIVINITYEXPORTER_AddonPreferences
+)
+
+def register():
+    bpy.types.TOPBAR_MT_file_import.append(menu_func)
+
+    for cls in classes:
+        bpy.utils.register_class(cls)
 
     wm = bpy.context.window_manager
     km = wm.keyconfigs.addon.keymaps.new('Window', space_type='EMPTY', region_type='WINDOW', modal=False)
@@ -1839,17 +1752,17 @@ def register():
     #kmi.properties.name = DIVINITYEXPORTER_OT_export_collada.bl_idname
     addon_keymaps.append((km, kmi))
     
-    bpy.app.handlers.scene_update_post.append(leaderhelpers_register_exportdraw)
+    #bpy.app.handlers.scene_update_post.append(leaderhelpers_register_exportdraw)
 
 def unregister():
-    bpy.utils.unregister_module(__name__)
     #bpy.utils.unregister_class(DIVINITYEXPORTER_OT_export_collada)
+    bpy.types.TOPBAR_MT_file_import.remove(menu_func)
+
+    for cls in classes:
+        bpy.utils.unregister_class(cls)
 
     try:
-        bpy.types.INFO_MT_file_export.remove(menu_func)
         bpy.app.handlers.scene_update_post.remove(leaderhelpers_register_exportdraw)
-        #bpy.types.FILEBROWSER_HT_header.remove(draw_file_progress)
-        #del bpy.types.Scene.daefileprogress
 
         wm = bpy.context.window_manager
         kc = wm.keyconfigs.addon

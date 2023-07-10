@@ -31,6 +31,7 @@ import shutil
 import bpy
 import bmesh
 from mathutils import Vector, Matrix
+from bpy_extras import node_shader_utils
 
 # According to collada spec, order matters
 S_ASSET = 0
@@ -49,8 +50,6 @@ S_ANIM = 12
 
 CMP_EPSILON = 0.0001
 
-AUTHORING_TOOL_EXPORTER = "Divinity Collada Exporter for Blender"
-AUTHORING_TOOL_AUTHOR = "by Juan Linietsky (juan@codenix.com), modified by LaughingLeader"
 
 def snap_tup(tup):
     ret = ()
@@ -102,10 +101,9 @@ class DaeExporter:
             return "z{}".format(d)
         return d
 
-    def new_id(self, t, extra=""):
+    def new_id(self, t):
         self.last_id += 1
-        return "{}{}-id-{}".format(t, extra, self.last_id)
-        #return t
+        return "id-{}-{}".format(t, self.last_id)
 
     class Vertex:
 
@@ -167,27 +165,39 @@ class DaeExporter:
                 sections[k] = v
         self.sections = sections
 
-    def mesh_has_property(self, obj, mesh, property):
-        if mesh.get(property, None) is not None or mesh.get(property.capitalize(), None) is not None:
-            return True
-        elif obj.get(property, None) is not None or obj.get(property.capitalize(), None) is not None:
-            return True
-        return False
+    def mesh_get_property(self, obj, mesh, property):
+        val = mesh.get(property, None)
+        if val is None:
+            val = mesh.get(property.capitalize(), None)
+        if val is None and obj is not None:
+            val = obj.get(property, None)
+        if val is None and obj is not None:
+            val = obj.get(property.capitalize(), None)
+        return val
+
+    def mesh_get_flag(self, obj, mesh, property, default):
+        val = self.mesh_get_property(obj, mesh, property)
+        if val is not None and isinstance(val, bool):
+            return val
+        else:
+            return default
+
+    def mesh_get_float(self, obj, mesh, property, default):
+        val = self.mesh_get_property(obj, mesh, property)
+        if val is not None and isinstance(val, (int, float)):
+            return val
+        else:
+            return default
 
     def export_mesh(self, node, armature=None, skeyindex=-1, skel_source=None,
-                    export_name=None):
+                    custom_name=None):
         mesh = node.data
-
+        
         if (node.data in self.mesh_cache):
-            print("    [DOS2DE-Exporter] Using mesh cache for '{}'.".format(mesh.name))
             return self.mesh_cache[mesh]
-
-        if export_name is None or export_name == "":
-            export_name = mesh.name
 
         if (skeyindex == -1 and mesh.shape_keys is not None and len(
                 mesh.shape_keys.key_blocks) and self.config["use_shape_key_export"]):
-            print("    [DOS2DE-Exporter] Exporting with shape keys for '{}'.".format(mesh.name))
             values = []
             morph_targets = []
             md = None
@@ -205,14 +215,36 @@ class DaeExporter:
                 shape.value = 1.0
                 mesh.update()
                 p = node.data
-                v = node.to_mesh(bpy.context.scene, True, "RENDER")
+                
+                armature_modifier = None            
+                armature_modifier_state = None
+                
+                if(self.config["use_exclude_armature_modifier"]):
+                    armature_modifiers = [i for i in node.modifiers if i.type == "ARMATURE"]
+                    armature_modifier = armature_modifiers[0]#node.modifiers.get("Armature")
+
+                if(armature_modifier):  
+                    # the armature modifier must be disabled too
+                    armature_modifier_state = armature_modifier.show_viewport
+                    armature_modifier.show_viewport = False         
+                
+                print(node)
+                v = node.to_mesh(preserve_all_data_layers=True, depsgraph=bpy.context.evaluated_depsgraph_get()) 
+                print(v)
+                # Warning, Blender 2.8 does not support anymore the "RENDER" argument to apply modifier
+                # with render state only...
+                
+                armature_modifier.show_viewport = armature_modifier_state
+                
                 self.temp_meshes.add(v)
-                node.data = v
-                node.data.update()
-                if (armature and k == 0):
-                    md = self.export_mesh(node, armature, k, mid, shape.name, export_name)
-                else:
-                    md = self.export_mesh(node, None, k, None, shape.name, export_name)
+                deps = bpy.context.evaluated_depsgraph_get()
+                evaluated_node = node.evaluated_get(deps)
+                evaluated_node.data = v
+                evaluated_node.data.update()
+                if (armature and k == 0):                   
+                    md = self.export_mesh(evaluated_node, armature, k, mid, shape.name)
+                else:                   
+                    md = self.export_mesh(evaluated_node, None, k, None, shape.name)
 
                 node.data = p
                 node.data.update()
@@ -221,8 +253,6 @@ class DaeExporter:
 
             node.show_only_shape_key = False
             node.active_shape_key_index = 0
-
-            print("[DOS2DE-Exporter] Writing mesh xml for '{}'.".format(mesh.name))
 
             self.writel(
                 S_MORPH, 1, "<controller id=\"{}\" name=\"\">".format(mid))
@@ -306,8 +336,6 @@ class DaeExporter:
             else:
                 meshdata["id"] = morph_targets[0]["id"]
                 meshdata["morph_id"] = mid
-                meshdata["material_assign"] = morph_targets[
-                    0]["material_assign"]
 
             self.mesh_cache[node.data] = meshdata
             return meshdata
@@ -315,12 +343,20 @@ class DaeExporter:
 
         armature_modifier = None
         armature_poses = None
-
+        armature_modifier_state = None
+        
         if(self.config["use_exclude_armature_modifier"]):
-            armature_modifier = node.modifiers.get("Armature")
+            armature_modifiers = [i for i in node.modifiers if i.type == "ARMATURE"]
+            if len(armature_modifiers) > 0:
+                print(node.name)            
+                armature_modifier = armature_modifiers[0]#node.modifiers.get("Armature")
 
-        if(armature_modifier):
-        	# doing this per object is inefficient, should be improved, maybe?
+        # Set armature in rest pose
+        if(armature_modifier):  
+            # the armature modifier must be disabled too
+            armature_modifier_state = armature_modifier.show_viewport
+            armature_modifier.show_viewport = False         
+            #doing this per object is inefficient, should be improved, maybe?
             armature_poses = [arm.pose_position for arm in bpy.data.armatures]
             for arm in bpy.data.armatures:
                 arm.pose_position = "REST"
@@ -328,14 +364,23 @@ class DaeExporter:
         apply_modifiers = len(node.modifiers) and self.config[
             "use_mesh_modifiers"]
 
-        mesh = node.to_mesh(self.scene, apply_modifiers,
-                            "RENDER")  # TODO: Review
-        if(armature_modifier):
-            for i, arm in enumerate(bpy.data.armatures):
+        name_to_use = mesh.name
+        if (custom_name is not None and custom_name != ""):
+            name_to_use = custom_name
+
+        mesh = node.to_mesh(preserve_all_data_layers=False, depsgraph=bpy.context.evaluated_depsgraph_get()) 
+        # 2.8 update: warning, Blender does not support anymore the "RENDER" argument to apply modifier
+        # with render state, only current state
+        
+        # Restore armature and modifier state
+        if(armature_modifier):          
+            armature_modifier.show_viewport = armature_modifier_state           
+            for i,arm in enumerate(bpy.data.armatures):
                 arm.pose_position = armature_poses[i]
+                
+
 
         self.temp_meshes.add(mesh)
-        print("    [DOS2DE-Exporter] Triangulating mesh '{}'.".format(mesh.name))
         triangulate = self.config["use_triangles"]
         if (triangulate):
             bm = bmesh.new()
@@ -343,24 +388,23 @@ class DaeExporter:
             bmesh.ops.triangulate(bm, faces=bm.faces)
             bm.to_mesh(mesh)
             bm.free()
-            mesh.update(calc_tessface=True)
-        
+
+        mesh.update(calc_edges=False, calc_edges_loose=False)
         vertices = []
         vertex_map = {}
         surface_indices = {}
-        materials = {}
 
         si = None
         if armature is not None:
             si = self.skeleton_info[armature]
 
+        # TODO: Implement automatic tangent detection
         has_tangents = self.config["use_tangent"]
 
         has_colors = len(mesh.vertex_colors)
-        mat_assign = []
 
-        uv_layer_count = len(mesh.uv_textures)
-        if has_tangents and len(mesh.uv_textures):
+        uv_layer_count = len(mesh.uv_layers)
+        if has_tangents and len(mesh.uv_layers):
             try:
                 mesh.calc_tangents()
             except:
@@ -380,19 +424,6 @@ class DaeExporter:
 
             if not (f.material_index in surface_indices):
                 surface_indices[f.material_index] = []
-
-            if self.can_export_type("MATERIAL"):
-                try:
-                    # TODO: Review, understand why it throws
-                    mat = mesh.materials[f.material_index]
-                except:
-                    mat = None
-
-                if (mat is not None):
-                    materials[f.material_index] = self.export_material(
-                        mat, mesh.show_double_sided, export_name)
-                else:
-                    materials[f.material_index] = None
 
             indices = surface_indices[f.material_index]
             vi = []
@@ -445,8 +476,7 @@ class DaeExporter:
                         # TODO: Explore how to deal with zero-weight bones,
                         #       which remain local
                         v.bones.append(0)
-                        #v.weights.append(1)
-                        v.weights.append(0)
+                        v.weights.append(1)
 
                 tup = v.get_tup()
                 idx = 0
@@ -463,11 +493,10 @@ class DaeExporter:
             if (len(vi) > 2):  # Only triangles and above
                 indices.append(vi)
 
-        #meshid = self.new_id("mesh")
-        meshid = self.new_id(export_name)
+        meshid = self.new_id("mesh")
         self.writel(
             S_GEOM, 1, "<geometry id=\"{}\" name=\"{}\">".format(
-                meshid, export_name))
+                meshid, name_to_use))
 
         self.writel(S_GEOM, 2, "<mesh>")
 
@@ -536,33 +565,7 @@ class DaeExporter:
             self.writel(S_GEOM, 4, "</technique_common>")
             self.writel(S_GEOM, 3, "</source>")
 
-            # Binormals
-            self.writel(
-                S_GEOM, 3, "<source id=\"{}-binormals\">".format(meshid))
-            float_values = ""
-            for v in vertices:
-                tangent = v.tangent
-                normal = v.normal
-                binormal = normal.cross(tangent)
-                binormal.normalize()
-                float_values += " {} {} {}".format(
-                    binormal.x, binormal.y, binormal.z)
-            self.writel(
-                S_GEOM, 4, "<float_array id=\"{}-binormals-array\" "
-                "count=\"{}\">{}</float_array>".format(
-                    meshid, len(vertices) * 3, float_values))
-            self.writel(S_GEOM, 4, "<technique_common>")
-            self.writel(
-                S_GEOM, 4, "<accessor source=\"#{}-binormals-array\" "
-                "count=\"{}\" stride=\"3\">".format(meshid, len(vertices)))
-            self.writel(S_GEOM, 5, "<param name=\"X\" type=\"float\"/>")
-            self.writel(S_GEOM, 5, "<param name=\"Y\" type=\"float\"/>")
-            self.writel(S_GEOM, 5, "<param name=\"Z\" type=\"float\"/>")
-            self.writel(S_GEOM, 4, "</accessor>")
-            self.writel(S_GEOM, 4, "</technique_common>")
-            self.writel(S_GEOM, 3, "</source>")
-
-            #Bitangents
+            # Bitangents
             self.writel(S_GEOM, 3, "<source id=\"{}-bitangents\">".format(
                 meshid))
             float_values = ""
@@ -585,10 +588,9 @@ class DaeExporter:
             self.writel(S_GEOM, 3, "</source>")
 
         # UV Arrays
-        if uv_layer_count > 0:
-            uvi = 0
-            self.writel(S_GEOM, 3, "<source id=\"{}-uvs0\">".format(
-                meshid))
+        for uvi in range(uv_layer_count):
+            self.writel(S_GEOM, 3, "<source id=\"{}-texcoord-{}\">".format(
+                meshid, uvi))
             float_values = ""
             for v in vertices:
                 try:
@@ -598,14 +600,14 @@ class DaeExporter:
                     float_values += " 0 0 "
 
             self.writel(
-                S_GEOM, 4, "<float_array id=\"{}-uvs0-array\" "
+                S_GEOM, 4, "<float_array id=\"{}-texcoord-{}-array\" "
                 "count=\"{}\">{}</float_array>".format(
-                    meshid, len(vertices) * 2, float_values))
+                    meshid, uvi, len(vertices) * 2, float_values))
             self.writel(S_GEOM, 4, "<technique_common>")
             self.writel(
-                S_GEOM, 4, "<accessor source=\"#{}-uvs0-array\" "
+                S_GEOM, 4, "<accessor source=\"#{}-texcoord-{}-array\" "
                 "count=\"{}\" stride=\"2\">".format(
-                    meshid, len(vertices)))
+                    meshid, uvi, len(vertices)))
             self.writel(S_GEOM, 5, "<param name=\"S\" type=\"float\"/>")
             self.writel(S_GEOM, 5, "<param name=\"T\" type=\"float\"/>")
             self.writel(S_GEOM, 4, "</accessor>")
@@ -650,20 +652,10 @@ class DaeExporter:
 
         for m in surface_indices:
             indices = surface_indices[m]
-            mat = None
-            if m in materials:
-                mat = materials[m]
-            if (mat is not None):
-                matref = self.new_id("trimat")
-                self.writel(
-                    S_GEOM, 3, "<{} count=\"{}\" material=\"{}\">".format(
-                        prim_type,
-                        int(len(indices)), matref))  # TODO: Implement material
-                mat_assign.append((mat, matref))
-            else:
-                self.writel(S_GEOM, 3, "<{} count=\"{}\">".format(
-                    prim_type, int(len(indices))))
-            
+
+            self.writel(S_GEOM, 3, "<{} count=\"{}\">".format(
+                prim_type, int(len(indices))))
+
             self.writel(
                 S_GEOM, 4, "<input semantic=\"VERTEX\" "
                 "source=\"#{}-vertices\" offset=\"0\"/>".format(meshid))
@@ -671,12 +663,11 @@ class DaeExporter:
                 S_GEOM, 4, "<input semantic=\"NORMAL\" "
                 "source=\"#{}-normals\" offset=\"0\"/>".format(meshid))
 
-            if uv_layer_count > 0:
-                uvi = 0
+            for uvi in range(uv_layer_count):
                 self.writel(
                     S_GEOM, 4,
-                    "<input semantic=\"TEXCOORD\" source=\"#{}-uvs0\" "
-                    "offset=\"0\" set=\"{}\"/>".format(meshid, uvi))
+                    "<input semantic=\"TEXCOORD\" source=\"#{}-texcoord-{}\" "
+                    "offset=\"0\" set=\"{}\"/>".format(meshid, uvi, uvi))
 
             if (has_colors):
                 self.writel(
@@ -684,17 +675,11 @@ class DaeExporter:
                     "source=\"#{}-colors\" offset=\"0\"/>".format(meshid))
             if (has_tangents):
                 self.writel(
-                    S_GEOM, 4, "<input semantic=\"TANGENT\" "
+                    S_GEOM, 4, "<input semantic=\"TEXTANGENT\" "
                     "source=\"#{}-tangents\" offset=\"0\"/>".format(meshid))
                 self.writel(
-                    S_GEOM, 4, "<input semantic=\"BINORMAL\" "
-                    "source=\"#{}-binormals\" offset=\"0\"/>".format(meshid))
-                """ self.writel(
-                    S_GEOM, 4, "<input semantic=\"TEXTANGENT\" "
-                    "source=\"#{}-tangents\" offset=\"0\"/>".format(meshid)) """
-                """ self.writel(
                     S_GEOM, 4, "<input semantic=\"TEXBINORMAL\" "
-                    "source=\"#{}-bitangents\" offset=\"0\"/>".format(meshid)) """
+                    "source=\"#{}-bitangents\" offset=\"0\"/>".format(meshid))
 
             if (triangulate):
                 int_values = "<p>"
@@ -718,43 +703,33 @@ class DaeExporter:
             self.writel(S_GEOM, 3, "<extra>")
             self.writel(S_GEOM, 4, "<technique profile=\"LSTools\">")
             
-            mesh_extra = ""
             obj_check = bpy.data.objects[node.name]
             mesh_check = bpy.data.meshes[mesh.name]
 
-            #Animations don't use custom flags
-            if self.config["use_anim"] == False:
-                # Custom Property
-                if self.mesh_has_property(obj_check, mesh_check, "rigid"):
-                    mesh_extra = "rigid"
-                if self.mesh_has_property(obj_check, mesh_check, "cloth"):
-                    mesh_extra = "cloth"
-                if self.mesh_has_property(obj_check, mesh_check, "meshproxy"):
-                    mesh_extra = "meshproxy"
-                if self.mesh_has_property(obj_check, mesh_check, "rigidcloth"):
-                    mesh_extra = "rigidcloth"
-                # Global
-                if self.config["convert_gr2"] == True:
-                    extra_settings = self.config["divine_settings"].gr2_settings.extras
-                    if extra_settings == "RIGID":
-                        mesh_extra = "rigid"
-                    if extra_settings == "CLOTH":
-                        mesh_extra = "cloth"
-                    if extra_settings == "MESHPROXY":
-                        mesh_extra = "meshproxy"   
-                    if extra_settings == "RIGIDCLOTH":
-                        mesh_extra = "rigidcloth"
-            if mesh_extra == "rigid":
-                self.writel(S_GEOM, 5, "<DivModelType>Rigid</DivModelType>")
-            elif mesh_extra == "cloth":
-                self.writel(S_GEOM, 5, "<DivModelType>Cloth</DivModelType>")
-            elif mesh_extra == "meshproxy":
-                self.writel(S_GEOM, 5, "<DivModelType>MeshProxy</DivModelType>")
-            elif mesh_extra == "rigidcloth":
-                self.writel(S_GEOM, 5, "<DivModelType>Rigid</DivModelType><DivModelType>Cloth</DivModelType>")
-            else:
-                self.writel(S_GEOM, 5, "<DivModelType>Normal</DivModelType>")
+            extra_settings = self.config["divine_settings"].gr2_settings.extras
 
+            if self.mesh_get_flag(obj_check, mesh_check, "rigid", False) or extra_settings == "RIGID":
+                self.writel(S_GEOM, 5, "<DivModelType>Rigid</DivModelType>")
+            if self.mesh_get_flag(obj_check, mesh_check, "cloth", False) or extra_settings == "CLOTH":
+                self.writel(S_GEOM, 5, "<DivModelType>Cloth</DivModelType>")
+            if self.mesh_get_flag(obj_check, mesh_check, "meshproxy", False) or self.mesh_get_flag(obj_check, mesh_check, "MeshProxy", False) or extra_settings == "MESHPROXY":
+                self.writel(S_GEOM, 5, "<DivModelType>MeshProxy</DivModelType>")
+            if self.mesh_get_flag(obj_check, mesh_check, "proxy", False):
+                self.writel(S_GEOM, 5, "<DivModelType>ProxyGeometry</DivModelType>")
+            if self.mesh_get_flag(obj_check, mesh_check, "spring", False):
+                self.writel(S_GEOM, 5, "<DivModelType>Spring</DivModelType>")
+            if self.mesh_get_flag(obj_check, mesh_check, "occluder", False):
+                self.writel(S_GEOM, 5, "<DivModelType>Occluder</DivModelType>")
+            if self.mesh_get_flag(obj_check, mesh_check, "impostor", False):
+                self.writel(S_GEOM, 5, "<IsImpostor>1</IsImpostor>")
+
+            lod = self.mesh_get_float(obj_check, mesh_check, "lod", 0) or self.mesh_get_float(obj_check, mesh_check, "LOD", 0)
+            if lod != 0:
+                self.writel(S_GEOM, 5, "<LOD>" + str(lod) + "</LOD>")
+
+            lodDistance = self.mesh_get_float(obj_check, mesh_check, "loddistance", 0) or self.mesh_get_float(obj_check, mesh_check, "LODDistance", 0) or self.mesh_get_float(obj_check, mesh_check, "LodDistance", 0)
+            if lodDistance != 0:
+                self.writel(S_GEOM, 5, "<LODDistance>" + str(lodDistance) + "</LODDistance>")
 
             self.writel(S_GEOM, 4, "</technique>")
             self.writel(S_GEOM, 3, "</extra>")
@@ -764,16 +739,13 @@ class DaeExporter:
 
         meshdata = {}
         meshdata["id"] = meshid
-        meshdata["material_assign"] = mat_assign
         if (skeyindex == -1):
             self.mesh_cache[node.data] = meshdata
 
         # Export armature data (if armature exists)
         if (armature is not None and (
                 skel_source is not None or skeyindex == -1)):
-            #contid = self.new_id("controller")
-            armature_name = armature.get("export_name", armature.name)
-            contid = self.new_id(armature_name)
+            contid = self.new_id("controller")
 
             self.writel(S_SKIN, 1, "<controller id=\"{}\">".format(contid))
             if (skel_source is not None):
@@ -885,16 +857,16 @@ class DaeExporter:
 
         return meshdata
 
-    def export_mesh_node(self, node, il, export_name=""):
+    def export_mesh_node(self, node, il):
         if (node.data is None):
-            print("  [DOS2DE-Exporter] *WARNING* Mesh node '{}' has no data!".format(node.name))
             return
 
         armature = None
         armcount = 0
         for n in node.modifiers:
             if (n.type == "ARMATURE"):
-                armcount += 1
+                if n.object:# make sure the armature modifier is not null
+                    armcount += 1
 
         if (node.parent is not None):
             if (node.parent.type == "ARMATURE"):
@@ -913,7 +885,7 @@ class DaeExporter:
         if (armcount > 0 and not armature):
             self.operator.report(
                 {"WARNING"},
-                "Object \"{}\" has an armature modifier, but is not a child of "
+                "Object \"{}\" has armature modifier, but is not a child of "
                 "an armature. This is unsupported.".format(node.name))
 
         if (node.data.shape_keys is not None):
@@ -924,17 +896,16 @@ class DaeExporter:
                         for v in d.driver.variables:
                             for t in v.targets:
                                 if (t.id is not None and
-                                        t.id.name in self.objects):
+                                        t.id.name in self.scene.objects):
                                     self.armature_for_morph[
-                                        node] = self.objects[t.id.name]
-
-        print("  [DOS2DE-Exporter] Preparing meshdata for '{}'.".format(node.name))
-        meshdata = self.export_mesh(node, armature, export_name=export_name)
+                                        node] = self.scene.objects[t.id.name]
+        
+    
+        meshdata = self.export_mesh(node, armature)
         close_controller = False
 
         if ("skin_id" in meshdata):
             close_controller = True
-            print("  [DOS2DE-Exporter] Using skin_id for '{}'.".format(node.name))
             self.writel(
                 S_NODES, il, "<instance_controller url=\"#{}\">".format(
                     meshdata["skin_id"]))
@@ -942,28 +913,13 @@ class DaeExporter:
                 self.writel(
                     S_NODES, il + 1, "<skeleton>#{}</skeleton>".format(sn))
         elif ("morph_id" in meshdata):
-            print("  [DOS2DE-Exporter] Using morph_id for '{}'.".format(node.name))
             self.writel(
                 S_NODES, il, "<instance_controller url=\"#{}\">".format(
                     meshdata["morph_id"]))
             close_controller = True
         elif (armature is None):
-            print("  [DOS2DE-Exporter] No armature, writing instance geometry for '{}'.".format(node.name))
             self.writel(S_NODES, il, "<instance_geometry url=\"#{}\">".format(
                 meshdata["id"]))
-
-        if (len(meshdata["material_assign"]) > 0):
-            print("  [DOS2DE-Exporter] Writing material data for '{}'.".format(node.name))
-            self.writel(S_NODES, il + 1, "<bind_material>")
-            self.writel(S_NODES, il + 2, "<technique_common>")
-            for m in meshdata["material_assign"]:
-                self.writel(
-                    S_NODES, il + 3,
-                    "<instance_material symbol=\"{}\" target=\"#{}\"/>".format(
-                        m[1], m[0]))
-
-            self.writel(S_NODES, il + 2, "</technique_common>")
-            self.writel(S_NODES, il + 1, "</bind_material>")
 
         if (close_controller):
             self.writel(S_NODES, il, "</instance_controller>")
@@ -973,19 +929,25 @@ class DaeExporter:
     def export_armature_bone(self, bone, il, si):
         is_ctrl_bone = (
             self.config["use_exclude_ctrl_bones"] and
-            (bone.name.startswith("ctrl") or bone.use_deform is False))
+            (bone.name.startswith("ctrl") or bone.use_deform == False))
         if (bone.parent is None and is_ctrl_bone is True):
             self.operator.report(
-                {"WARNING"}, "Root bone cannot be a control bone.")
+                {"WARNING"}, "Root bone cannot be a control bone:"+bone.name)
             is_ctrl_bone = False
 
         if (is_ctrl_bone is False):
             boneid = self.new_id("bone")
-            #boneid = self.new_id(bone.name)
             boneidx = si["bone_count"]
             si["bone_count"] += 1
             bonesid = "{}-{}".format(si["id"], boneidx)
-            self.used_bones.append(bone.name)
+            if (bone.name in self.used_bones):
+                if (self.config["use_anim_action_all"]):
+                    self.operator.report(
+                        {"WARNING"}, "Bone name \"{}\" used in more than one "
+                        "skeleton. Actions might export wrong.".format(
+                            bone.name))
+            else:
+                self.used_bones.append(bone.name)
 
             si["bone_index"][bone.name] = boneidx
             si["bone_ids"][bone] = boneid
@@ -1000,10 +962,10 @@ class DaeExporter:
         xform = bone.matrix_local
         if (is_ctrl_bone is False):
             si["bone_bind_poses"].append(
-                    (si["armature_xform"] * xform).inverted_safe())
+                    (si["armature_xform"] @ xform).inverted_safe())
 
         if (bone.parent is not None):
-            xform = bone.parent.matrix_local.inverted_safe() * xform
+            xform = bone.parent.matrix_local.inverted_safe() @ xform
         else:
             si["skeleton_nodes"].append(boneid)
 
@@ -1019,7 +981,7 @@ class DaeExporter:
             il -= 1
             self.writel(S_NODES, il, "</node>")
 
-    def export_armature_node(self, node, il, export_name=""):
+    def export_armature_node(self, node, il):
         if (node.data is None):
             return
 
@@ -1028,8 +990,8 @@ class DaeExporter:
         armature = node.data
         self.skeleton_info[node] = {
             "bone_count": 0,
-            "id": self.new_id(export_name),
-            "name": export_name,
+            "id": self.new_id("skelbones"),
+            "name": node.name,
             "bone_index": {},
             "bone_ids": {},
             "bone_names": [],
@@ -1049,23 +1011,14 @@ class DaeExporter:
                     if (x.type == "ACTION"):
                         self.action_constraints.append(x.action)
 
-    def export_empty_node(self, node, il, export_name=""):
-        self.writel(S_NODES, 4, "<extra>")
-        self.writel(S_NODES, 5, "<technique profile=\"GODOT\">")
-        self.writel(
-            S_NODES, 6,
-            "<empty_draw_type>{}</empty_draw_type>".format(
-                node.empty_draw_type))
-        self.writel(S_NODES, 5, "</technique>")
-        self.writel(S_NODES, 4, "</extra>")
-
-    def export_curve(self, curve, export_name=""):
+    def export_curve(self, curve):
         splineid = self.new_id("spline")
 
         self.writel(
             S_GEOM, 1, "<geometry id=\"{}\" name=\"{}\">".format(
-                splineid, export_name))
-        self.writel(S_GEOM, 2, "<spline closed=\"0\">")
+                splineid, curve.name))
+        self.writel(S_GEOM, 2, "<spline closed=\"{}\">".format(
+                "true" if curve.splines and curve.splines[0].use_cyclic_u else "false"))
 
         points = []
         interps = []
@@ -1225,301 +1178,62 @@ class DaeExporter:
 
         return splineid
 
-    def export_curve_node(self, node, il, export_name=""):
+    def export_curve_node(self, node, il):
         if (node.data is None):
             return
 
-        curveid = self.export_curve(node.data, export_name)
+        curveid = self.export_curve(node.data)
 
         self.writel(S_NODES, il, "<instance_geometry url=\"#{}\">".format(
             curveid))
         self.writel(S_NODES, il, "</instance_geometry>")
 
-    def export_image(self, image, export_name=""):
-        img_id = self.image_cache.get(image)
-        if img_id:
-            return img_id
-
-        imgpath = image.filepath
-        if imgpath.startswith("//"):
-            imgpath = bpy.path.abspath(imgpath)
-
-        if (self.config["use_copy_images"]):
-            basedir = os.path.join(os.path.dirname(self.path), "images")
-            if (not os.path.isdir(basedir)):
-                os.makedirs(basedir)
-
-            if os.path.isfile(imgpath):
-                dstfile = os.path.join(basedir, os.path.basename(imgpath))
-
-                if not os.path.isfile(dstfile):
-                    shutil.copy(imgpath, dstfile)
-                imgpath = os.path.join("images", os.path.basename(imgpath))
-            else:
-                img_tmp_path = image.filepath
-                if img_tmp_path.lower().endswith(
-                    tuple(bpy.path.extensions_image)):
-                    image.filepath = os.path.join(
-                        basedir, os.path.basename(img_tmp_path))
-                else:
-                    image.filepath = os.path.join(
-                        basedir, "{}.png".format(image.name))
-
-                dstfile = os.path.join(
-                    basedir, os.path.basename(image.filepath))
-
-                if not os.path.isfile(dstfile):
-                    image.save()
-                imgpath = os.path.join(
-                    "images", os.path.basename(image.filepath))
-                image.filepath = img_tmp_path
-
-        else:
-            try:
-                imgpath = os.path.relpath(
-                    imgpath, os.path.dirname(self.path)).replace("\\", "/")
-            except:
-                # TODO: Review, not sure why it fails
-                pass
-
-        imgid = self.new_id("image")
-
-        print("FOR: {}".format(imgpath))
-
-        self.writel(S_IMGS, 1, "<image id=\"{}\" name=\"{}\">".format(
-            imgid, image.name))
-        self.writel(S_IMGS, 2, "<init_from>{}</init_from>".format(imgpath))
-        self.writel(S_IMGS, 1, "</image>")
-        self.image_cache[image] = imgid
-        return imgid
-
-    def export_material(self, material, double_sided_hint=True, export_name=""):
-        material_id = self.material_cache.get(material)
-        if material_id:
-            return material_id
-
-        fxid = self.new_id("fx")
-        self.writel(S_FX, 1, "<effect id=\"{}\" name=\"{}-fx\">".format(
-            fxid, material.name))
-        self.writel(S_FX, 2, "<profile_COMMON>")
-
-        # Find and fetch the textures and create sources
-        sampler_table = {}
-        diffuse_tex = None
-        specular_tex = None
-        emission_tex = None
-        normal_tex = None
-        for i in range(len(material.texture_slots)):
-            ts = material.texture_slots[i]
-            if not ts:
-                continue
-            if not ts.use:
-                continue
-            if not ts.texture:
-                continue
-            if ts.texture.type != "IMAGE":
-                continue
-
-            if ts.texture.image is None:
-                continue
-
-            # Image
-            imgid = self.export_image(ts.texture.image, export_name)
-
-            # Surface
-            surface_sid = self.new_id("fx_surf")
-            self.writel(S_FX, 3, "<newparam sid=\"{}\">".format(surface_sid))
-            self.writel(S_FX, 4, "<surface type=\"2D\">")
-            self.writel(S_FX, 5, "<init_from>{}</init_from>".format(imgid))
-            self.writel(S_FX, 5, "<format>A8R8G8B8</format>")
-            self.writel(S_FX, 4, "</surface>")
-            self.writel(S_FX, 3, "</newparam>")
-
-            # Sampler
-            sampler_sid = self.new_id("fx_sampler")
-            self.writel(S_FX, 3, "<newparam sid=\"{}\">".format(sampler_sid))
-            self.writel(S_FX, 4, "<sampler2D>")
-            self.writel(S_FX, 5, "<source>{}</source>".format(surface_sid))
-            self.writel(S_FX, 4, "</sampler2D>")
-            self.writel(S_FX, 3, "</newparam>")
-            sampler_table[i] = sampler_sid
-
-            if ts.use_map_color_diffuse and diffuse_tex is None:
-                diffuse_tex = sampler_sid
-            if ts.use_map_color_spec and specular_tex is None:
-                specular_tex = sampler_sid
-            if ts.use_map_emit and emission_tex is None:
-                emission_tex = sampler_sid
-            if ts.use_map_normal and normal_tex is None:
-                normal_tex = sampler_sid
-
-        self.writel(S_FX, 3, "<technique sid=\"common\">")
-        shtype = "blinn"
-        self.writel(S_FX, 4, "<{}>".format(shtype))
-
-        self.writel(S_FX, 5, "<emission>")
-        if emission_tex is not None:
-            self.writel(
-                S_FX, 6, "<texture texture=\"{}\" texcoord=\"CHANNEL1\"/>"
-                .format(emission_tex))
-        else:
-            # TODO: More accurate coloring, if possible
-            self.writel(S_FX, 6, "<color>{}</color>".format(
-                numarr_alpha(material.diffuse_color, material.emit)))
-        self.writel(S_FX, 5, "</emission>")
-
-        self.writel(S_FX, 5, "<ambient>")
-        self.writel(S_FX, 6, "<color>{}</color>".format(
-            numarr_alpha(self.scene.world.ambient_color, material.ambient)))
-        self.writel(S_FX, 5, "</ambient>")
-
-        self.writel(S_FX, 5, "<diffuse>")
-        if diffuse_tex is not None:
-            self.writel(
-                S_FX, 6, "<texture texture=\"{}\" texcoord=\"CHANNEL1\"/>"
-                .format(diffuse_tex))
-        else:
-            self.writel(S_FX, 6, "<color>{}</color>".format(numarr_alpha(
-                material.diffuse_color, material.diffuse_intensity)))
-        self.writel(S_FX, 5, "</diffuse>")
-
-        self.writel(S_FX, 5, "<specular>")
-        if specular_tex is not None:
-            self.writel(
-                S_FX, 6,
-                "<texture texture=\"{}\" texcoord=\"CHANNEL1\"/>".format(
-                    specular_tex))
-        else:
-            self.writel(S_FX, 6, "<color>{}</color>".format(numarr_alpha(
-                material.specular_color, material.specular_intensity)))
-        self.writel(S_FX, 5, "</specular>")
-
-        self.writel(S_FX, 5, "<shininess>")
-        self.writel(S_FX, 6, "<float>{}</float>".format(
-            material.specular_hardness))
-        self.writel(S_FX, 5, "</shininess>")
-
-        self.writel(S_FX, 5, "<reflective>")
-        self.writel(S_FX, 6, "<color>{}</color>".format(
-            numarr_alpha(material.mirror_color)))
-        self.writel(S_FX, 5, "</reflective>")
-
-        if (material.use_transparency):
-            self.writel(S_FX, 5, "<transparency>")
-            self.writel(S_FX, 6, "<float>{}</float>".format(material.alpha))
-            self.writel(S_FX, 5, "</transparency>")
-
-        self.writel(S_FX, 5, "<index_of_refraction>")
-        self.writel(S_FX, 6, "<float>{}</float>".format(material.specular_ior))
-        self.writel(S_FX, 5, "</index_of_refraction>")
-
-        self.writel(S_FX, 4, "</{}>".format(shtype))
-
-        self.writel(S_FX, 4, "<extra>")
-        self.writel(S_FX, 5, "<technique profile=\"FCOLLADA\">")
-        if (normal_tex):
-            self.writel(S_FX, 6, "<bump bumptype=\"NORMALMAP\">")
-            self.writel(
-                S_FX, 7,
-                "<texture texture=\"{}\" texcoord=\"CHANNEL1\"/>".format(
-                    normal_tex))
-            self.writel(S_FX, 6, "</bump>")
-
-        self.writel(S_FX, 5, "</technique>")
-        self.writel(S_FX, 5, "<technique profile=\"GOOGLEEARTH\">")
-        self.writel(S_FX, 6, "<double_sided>{}</double_sided>".format(
-            int(double_sided_hint)))
-        self.writel(S_FX, 5, "</technique>")
-
-        if (material.use_shadeless):
-            self.writel(S_FX, 5, "<technique profile=\"GODOT\">")
-            self.writel(S_FX, 6, "<unshaded>1</unshaded>")
-            self.writel(S_FX, 5, "</technique>")
-
-        self.writel(S_FX, 4, "</extra>")
-
-        self.writel(S_FX, 3, "</technique>")
-        self.writel(S_FX, 2, "</profile_COMMON>")
-        self.writel(S_FX, 1, "</effect>")
-
-        # Material (if active)
-        matid = self.new_id("material")
-        self.writel(S_MATS, 1, "<material id=\"{}\" name=\"{}\">".format(
-            matid, material.name))
-        self.writel(S_MATS, 2, "<instance_effect url=\"#{}\"/>".format(fxid))
-        self.writel(S_MATS, 1, "</material>")
-
-        self.material_cache[material] = matid
-        return matid
-
-    def escape(self, data):
-        data = data.replace("&", "&amp;")
-        data = data.replace(">", "&gt;")
-        data = data.replace("<", "&lt;")
-        return data
-
-    def export_node(self, node, il):
+    def export_node(self, node, il):        
         if (node not in self.valid_nodes):
             return
 
-        prev_node = self.active_object
-        self.active_object = node
+        prev_node = bpy.context.view_layer.objects.active
+        bpy.context.view_layer.objects.active = node
 
-        try:
-            export_name = self.escape(node["export_name"])
-        except:
-            export_name = node.name
-        
-        exportid = self.new_id(export_name)
+        self.writel(
+            S_NODES, il, "<node id=\"{}\" name=\"{}\" type=\"NODE\">".format(
+                self.validate_id(node.name), node.name))
+        il += 1
 
-        print("Export name: {} id {}".format(export_name, exportid))
-        export_armature_enabled = True
-
-        if node.type != "ARMATURE" or export_armature_enabled == True:
-            self.writel(
-                S_NODES, il, "<node id=\"{}\" name=\"{}\" type=\"NODE\">".format(
-                    self.validate_id(exportid), export_name))
-            il += 1
-
-        if node.type != "ARMATURE" or export_armature_enabled == True:
-            self.writel(
-                S_NODES, il, "<matrix sid=\"transform\">{}</matrix>".format(
-                    strmtx(node.matrix_local)))
+        self.writel(
+            S_NODES, il, "<matrix sid=\"transform\">{}</matrix>".format(
+                strmtx(node.matrix_local)))
         if (node.type == "MESH"):
-            self.export_mesh_node(node, il, export_name=export_name)
+            self.export_mesh_node(node, il)
         elif (node.type == "CURVE"):
-            self.export_curve_node(node, il, export_name=export_name)
+            self.export_curve_node(node, il)
         elif (node.type == "ARMATURE"):
-            self.export_armature_node(node, il, export_name=export_name)
-        elif (node.type == "EMPTY"):
-            self.export_empty_node(node, il, export_name=export_name)
+            self.export_armature_node(node, il)
 
         for x in sorted(node.children, key=lambda x: x.name):
             self.export_node(x, il)
 
         il -= 1
-        if node.type != "ARMATURE" or export_armature_enabled == True:
-            self.writel(S_NODES, il, "</node>")
-        self.active_object = prev_node
+        self.writel(S_NODES, il, "</node>")
+        bpy.context.view_layer.objects.active = prev_node
 
-    def can_export_type(self, objtype):
-        if (objtype not in self.config["object_types"]):
+    def is_node_valid(self, node):
+        if (node.type not in self.config["object_types"]):
             return False
 
-        # if (self.config["use_active_layers"]):
-        #     valid = False
-        #     for i in range(20):
-        #         if (node.layers[i] and self.scene.layers[i]):
-        #             valid = True
-        #             break
-        #     if (not valid):
-        #         return False
+        if (self.config["use_active_layers"]):
+            valid = True
+            # use collections instead of layers
+            for col in node.users_collection:
+                if col.hide_viewport == True:
+                    valid = False
+                    break
+                    
+            if (not valid):
+                return False
 
-        # if (self.config["use_export_selected"] and not node.select):
-        #     return False
-
-        # if (self.config["use_export_visible"] and node.hide or node.hide_select):
-        #     return False
+        if (self.config["use_export_selected"] and not node.select_get()):
+            return False
 
         return True
 
@@ -1532,7 +1246,7 @@ class DaeExporter:
         for obj in self.objects:
             if (obj in self.valid_nodes):
                 continue
-            if (self.can_export_type(obj.type)):
+            if (self.is_node_valid(obj)):
                 n = obj
                 while (n is not None):
                     if (n not in self.valid_nodes):
@@ -1549,10 +1263,10 @@ class DaeExporter:
     def export_asset(self):
         self.writel(S_ASSET, 0, "<asset>")
         self.writel(S_ASSET, 1, "<contributor>")
-        author = bpy.context.user_preferences.system.author or "Anonymous"
-        self.writel(S_ASSET, 2, "<author>{}</author>".format(author))
+        self.writel(S_ASSET, 2, "<author></author>")
         self.writel(
-            S_ASSET, 2, "<authoring_tool>{} {}</authoring_tool>".format(AUTHORING_TOOL_EXPORTER, AUTHORING_TOOL_AUTHOR))
+            S_ASSET, 2, "<authoring_tool>Collada Exporter for Blender 2.6+, "
+            "by Juan Linietsky (juan@codenix.com)</authoring_tool>")
         self.writel(S_ASSET, 1, "</contributor>")
         self.writel(S_ASSET, 1, "<created>{}</created>".format(
             time.strftime("%Y-%m-%dT%H:%M:%SZ")))
@@ -1568,7 +1282,6 @@ class DaeExporter:
     def export_animation_transform_channel(self, target, keys, matrices=True):
         frame_total = len(keys)
         anim_id = self.new_id("anim")
-        #anim_id = self.new_id(target)
         self.writel(S_ANIM, 1, "<animation id=\"{}\">".format(anim_id))
         source_frames = ""
         source_transforms = ""
@@ -1709,7 +1422,7 @@ class DaeExporter:
                 if (node.type == "MESH" and node.data is not None and
                     node.data.shape_keys is not None and (
                         node.data in self.mesh_cache) and len(
-                            node.data.shape_keys.key_blocks)):
+                            node.data.shape_keys.key_blocks) and self.config["use_shape_key_export"]):
                     target = self.mesh_cache[node.data]["morph_id"]
                     for i in range(len(node.data.shape_keys.key_blocks)):
 
@@ -1730,7 +1443,7 @@ class DaeExporter:
                     continue
 
                 if (len(node.constraints) > 0 or
-                        node.animation_data is not None and node.type != "ARMATURE"):
+                        node.animation_data is not None):
                     # If the node has constraints, or animation data, then
                     # export a sampled animation track
                     name = self.validate_id(node.name)
@@ -1739,7 +1452,7 @@ class DaeExporter:
 
                     mtx = node.matrix_world.copy()
                     if (node.parent):
-                        mtx = node.parent.matrix_world.inverted_safe() * mtx
+                        mtx = node.parent.matrix_world.inverted_safe() @ mtx
 
                     xform_cache[name].append((key, mtx))
 
@@ -1784,7 +1497,7 @@ class DaeExporter:
                             if (not parent_invisible):
                                 mtx = (
                                     parent_posebone.matrix
-                                    .inverted_safe() * mtx)
+                                    .inverted_safe() @ mtx)
 
                         xform_cache[bone_name].append((key, mtx))
 
@@ -1792,14 +1505,11 @@ class DaeExporter:
 
         # Export animation XML
         for nid in xform_cache:
-            if nid != "Armature":
-                #print("nid: " + nid)
-                tcn += self.export_animation_transform_channel(
-                    nid, xform_cache[nid], True)
+            tcn += self.export_animation_transform_channel(
+                nid, xform_cache[nid], True)
         for nid in blend_cache:
-            if nid != "Armature":
-                tcn += self.export_animation_transform_channel(
-                    nid, blend_cache[nid], False)
+            tcn += self.export_animation_transform_channel(
+                nid, blend_cache[nid], False)
 
         return tcn
 
@@ -1813,16 +1523,88 @@ class DaeExporter:
             tmp_mat.append([Matrix(s.matrix_local), tmp_bone_mat])
 
         self.writel(S_ANIM, 0, "<library_animations>")
-        self.export_animation(self.scene.frame_start, self.scene.frame_end)
+
+        if (self.config["use_anim_action_all"] and len(self.skeletons)):
+
+            cached_actions = {}
+
+            for s in self.skeletons:
+                if s.animation_data and s.animation_data.action:
+                    cached_actions[s] = s.animation_data.action.name
+
+            self.writel(S_ANIM_CLIPS, 0, "<library_animation_clips>")
+
+            for x in bpy.data.actions[:]:
+                
+                if x.users == 0 or x in self.action_constraints:
+                    continue
+                if (self.config["use_anim_skip_noexp"] and
+                        x.name.endswith("-noexp")):
+                    continue
+                           
+                bones = []
+                # Find bones used
+                for p in x.fcurves:
+                    dp = p.data_path
+                    base = "pose.bones[\""
+                    if dp.startswith(base):
+                        dp = dp[len(base):]
+                        if (dp.find("\"") != -1):
+                            dp = dp[:dp.find("\"")]
+                            if (dp not in bones):
+                                bones.append(dp)
+
+                allowed_skeletons = []
+                for i, y in enumerate(self.skeletons):
+                    if (y.animation_data):
+                        for z in y.pose.bones:
+                            if (z.bone.name in bones):
+                                if (y not in allowed_skeletons):
+                                    allowed_skeletons.append(y)
+                        y.animation_data.action = x
+
+                        y.matrix_local = tmp_mat[i][0]
+                        for j, bone in enumerate(s.pose.bones):
+                            bone.matrix_basis = Matrix()
+
+                tcn = self.export_animation(int(x.frame_range[0]), int(
+                    x.frame_range[1] + 0.5), allowed_skeletons)
+                framelen = (1.0 / self.scene.render.fps)
+                start = x.frame_range[0] * framelen
+                end = x.frame_range[1] * framelen
+                self.writel(
+                    S_ANIM_CLIPS, 1, "<animation_clip name=\"{}\" "
+                    "start=\"{}\" end=\"{}\">".format(x.name, start, end))
+                for z in tcn:
+                    self.writel(S_ANIM_CLIPS, 2,
+                                "<instance_animation url=\"#{}\"/>".format(z))
+                self.writel(S_ANIM_CLIPS, 1, "</animation_clip>")
+                if (len(tcn) == 0):
+                    self.operator.report(
+                        {"WARNING"}, "Animation clip \"{}\" contains no "
+                        "tracks.".format(x.name))
+
+            self.writel(S_ANIM_CLIPS, 0, "</library_animation_clips>")
+
+            for i, s in enumerate(self.skeletons):
+                if (s.animation_data is None):
+                    continue
+                if s in cached_actions:
+                    s.animation_data.action = bpy.data.actions[
+                        cached_actions[s]]
+                else:
+                    s.animation_data.action = None
+                    for j, bone in enumerate(s.pose.bones):
+                        bone.matrix_basis = tmp_mat[i][1][j]
+
+        else:
+            self.export_animation(self.scene.frame_start, self.scene.frame_end)
+
         self.writel(S_ANIM, 0, "</library_animations>")
 
     def export(self):
         self.writel(S_GEOM, 0, "<library_geometries>")
         self.writel(S_CONT, 0, "<library_controllers>")
-        if self.can_export_type("MATERIAL"):
-            self.writel(S_IMGS, 0, "<library_images>")
-            self.writel(S_MATS, 0, "<library_materials>")
-            self.writel(S_FX, 0, "<library_effects>")
 
         self.export_asset()
         self.export_scene()
@@ -1841,11 +1623,6 @@ class DaeExporter:
             del self.sections[S_SKIN]
 
         self.writel(S_CONT, 0, "</library_controllers>")
-        
-        if self.can_export_type("MATERIAL"):
-            self.writel(S_IMGS, 0, "</library_images>")
-            self.writel(S_MATS, 0, "</library_materials>")
-            self.writel(S_FX, 0, "</library_effects>")
 
         self.purge_empty_nodes()
 
@@ -1878,26 +1655,23 @@ class DaeExporter:
         f.write(bytes("</COLLADA>\n", "UTF-8"))
         return True
 
-    __slots__ = ("operator", "scene", "objects", "active_object", "last_id", "scene_name", "sections",
-                 "path", "mesh_cache", "curve_cache", "material_cache",
-                 "image_cache", "skeleton_info", "config", "valid_nodes",
+    __slots__ = ("operator", "scene", "last_id", "scene_name", "objects", "sections",
+                 "path", "mesh_cache", "curve_cache",
+                 "skeleton_info", "config", "valid_nodes",
                  "armature_for_morph", "used_bones", "wrongvtx_report",
                  "skeletons", "action_constraints", "temp_meshes")
 
-    def __init__(self, path, kwargs, operator, objects):
+    def __init__(self, path, objects, kwargs, operator):
         self.operator = operator
         self.scene = bpy.context.scene
-        self.objects = objects
-        self.active_object = self.scene.objects.active
         self.last_id = 0
         self.scene_name = self.new_id("scene")
+        self.objects = objects
         self.sections = {}
         self.path = path
         self.mesh_cache = {}
         self.temp_meshes = set()
         self.curve_cache = {}
-        self.material_cache = {}
-        self.image_cache = {}
         self.skeleton_info = {}
         self.config = kwargs
         self.valid_nodes = []
@@ -1911,12 +1685,14 @@ class DaeExporter:
         return self
 
     def __exit__(self, *exc):
+        pass
+        """    
         for mesh in self.temp_meshes:
             bpy.data.meshes.remove(mesh)
+        """
 
-
-def save(operator, context, objects, filepath="", **kwargs):
-    with DaeExporter(filepath, kwargs, operator, objects) as exp:
+def save(operator, context, objects, filepath="", use_selection=False, **kwargs):
+    with DaeExporter(filepath, objects, kwargs, operator) as exp:
         exp.export()
 
     return {"FINISHED"}
