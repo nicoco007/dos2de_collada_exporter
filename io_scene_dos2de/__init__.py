@@ -25,11 +25,11 @@ import bmesh
 import os
 import os.path
 import subprocess
+import xml.etree.ElementTree as et
 
 from bpy.types import Operator, AddonPreferences, PropertyGroup, UIList, Panel
 from bpy.props import StringProperty, BoolProperty, FloatProperty, EnumProperty, CollectionProperty, PointerProperty, IntProperty
-from bpy_extras.io_utils import ExportHelper
-from bpy.app.handlers import persistent
+from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from math import radians, degrees
 from mathutils import Euler, Matrix
@@ -229,7 +229,8 @@ class Divine_ExportSettings(PropertyGroup):
         ("dos", "DOS", "Divinity: Original Sin"),
         ("dosee", "DOSEE", "Divinity: Original Sin - Enhanced Edition"),
         ("dos2", "DOS2", "Divinity: Original Sin 2"),
-        ("dos2de", "DOS2DE", "Divinity: Original Sin 2 - Definitive Edition")
+        ("dos2de", "DOS2DE", "Divinity: Original Sin 2 - Definitive Edition"),
+        ("bg3", "BG3", "Baldur's Gate 3")
     )
 
     game: EnumProperty(
@@ -1619,9 +1620,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         return result
 
-def menu_func(self, context):
-    self.layout.operator(DIVINITYEXPORTER_OT_export_collada.bl_idname, text="DOS2/BG3 Collada (.dae, .gr2)")
-
 addon_keymaps = []
 
 added_export_options = False
@@ -1703,12 +1701,84 @@ class OBJECT_PT_LSPropertyPanel(Panel):
             props = context.active_object.data.ls_properties
             layout.prop(props, "skeleton_resource_id")
 
+
+class DIVINITYEXPORTER_OT_import_collada(bpy.types.Operator, ImportHelper):
+    bl_idname = "import_scene.dos2de_collada"
+    bl_label = "Import DOS2/BG3 DAE"
+    bl_options = {"PRESET", "REGISTER", "UNDO"}
+
+    filename_ext: StringProperty(
+        name="File Extension",
+        options={"HIDDEN"},
+        default=".dae"
+    )
+
+    filter_glob: StringProperty(default="*.dae;*.gr2", options={"HIDDEN"})
+
+    def execute(self, context):
+        fdir = self.properties.filepath
+        bpy.ops.wm.collada_import(filepath=fdir, custom_normals=True)
+        root = et.parse(fdir).getroot()
+
+        anim_settings = None
+        for anim in root.findall("./{http://www.collada.org/2005/11/COLLADASchema}library_animations/{http://www.collada.org/2005/11/COLLADASchema}animation"):
+            settings = anim.find("{http://www.collada.org/2005/11/COLLADASchema}extra/{http://www.collada.org/2005/11/COLLADASchema}technique[@profile='LSTools']")
+            if settings is not None:
+                anim_settings = settings
+                break
+
+        for geom in root.findall("./{http://www.collada.org/2005/11/COLLADASchema}library_geometries/{http://www.collada.org/2005/11/COLLADASchema}geometry"):
+            settings = geom.find("{http://www.collada.org/2005/11/COLLADASchema}mesh/{http://www.collada.org/2005/11/COLLADASchema}extra/{http://www.collada.org/2005/11/COLLADASchema}technique[@profile='LSTools']")
+            if settings is not None:
+                mesh = bpy.data.meshes[geom.attrib['name']]
+                props = mesh.ls_properties
+                for ele in list(settings):
+                    if ele.tag == 'DivModelType':
+                        if ele.text == 'Rigid':
+                            props.rigid = True
+                        elif ele.text == 'Cloth':
+                            props.cloth = True
+                        elif ele.text == 'MeshProxy':
+                            props.mesh_proxy = True
+                        elif ele.text == 'ProxyGeometry':
+                            props.proxy = True
+                        elif ele.text == 'Spring':
+                            props.spring = True
+                        elif ele.text == 'Occluder':
+                            props.occluder = True
+                    elif ele.tag == 'IsImpostor' and ele.text == '1':
+                        props.impostor = True
+                    elif ele.tag == 'LOD':
+                        props.lod = int(ele.text)
+                    elif ele.tag == 'LODDistance':
+                        props.lod_distance = float(ele.text)
+
+        if anim_settings is not None:
+            skel = settings.find('SkeletonResourceID')
+            skeleton_id = ""
+            if skel is not None:
+                skeleton_id = skel.text
+
+            for obj in context.scene.objects:
+                if obj.type == "ARMATURE":
+                    props = obj.data.ls_properties
+                    props.skeleton_resource_id = skeleton_id
+
+        return{'FINISHED'}
+
+def export_menu_func(self, context):
+    self.layout.operator(DIVINITYEXPORTER_OT_export_collada.bl_idname, text="DOS2/BG3 Collada (.dae, .gr2)")
+
+def import_menu_func(self, context):
+    self.layout.operator(DIVINITYEXPORTER_OT_import_collada.bl_idname, text="DOS2/BG3 Collada (.dae, .gr2)")
+
 classes = (
     ProjectData,
     ProjectEntry,
     GR2_ExportSettings,
     Divine_ExportSettings,
     DIVINITYEXPORTER_OT_export_collada,
+    DIVINITYEXPORTER_OT_import_collada,
     DIVINITYEXPORTER_OT_add_project,
     DIVINITYEXPORTER_OT_remove_project,
     DIVINITYEXPORTER_UL_project_list,
@@ -1719,7 +1789,8 @@ classes = (
 )
 
 def register():
-    bpy.types.TOPBAR_MT_file_export.append(menu_func)
+    bpy.types.TOPBAR_MT_file_export.append(export_menu_func)
+    bpy.types.TOPBAR_MT_file_import.append(import_menu_func)
 
     for cls in classes:
         bpy.utils.register_class(cls)
@@ -1730,11 +1801,14 @@ def register():
     wm = bpy.context.window_manager
     km = wm.keyconfigs.addon.keymaps.new('Window', space_type='EMPTY', region_type='WINDOW', modal=False)
 
-    kmi = km.keymap_items.new(DIVINITYEXPORTER_OT_export_collada.bl_idname, 'E', 'PRESS', ctrl=True, shift=True)
-    addon_keymaps.append((km, kmi))
+    km_export = km.keymap_items.new(DIVINITYEXPORTER_OT_export_collada.bl_idname, 'E', 'PRESS', ctrl=True, shift=True)
+    km_import = km.keymap_items.new(DIVINITYEXPORTER_OT_import_collada.bl_idname, 'I', 'PRESS', ctrl=True, shift=True)
+    addon_keymaps.append((km, km_export))
+    addon_keymaps.append((km, km_import))
 
 def unregister():
-    bpy.types.TOPBAR_MT_file_export.remove(menu_func)
+    bpy.types.TOPBAR_MT_file_export.remove(export_menu_func)
+    bpy.types.TOPBAR_MT_file_import.remove(import_menu_func)
 
     for cls in classes:
         bpy.utils.unregister_class(cls)
@@ -1748,6 +1822,3 @@ def unregister():
         for km, kmi in addon_keymaps:
             km.keymap_items.remove(kmi)
     addon_keymaps.clear()
-
-if __name__ == "__main__":
-    register()
