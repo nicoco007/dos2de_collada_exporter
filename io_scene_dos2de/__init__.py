@@ -1619,91 +1619,10 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         return result
 
-class DIVINITYEXPORTER_OT_set_extra_flags(Operator):
-    """Set the GR2 Extra Flag for Export"""
-    bl_idname = "export_scene.dos2de_extraflagsop"
-    bl_label = "DOS2DE Extra Flags"
-
-    flag: EnumProperty(
-        name="Flag",
-        description="Set the custom export flag for this mesh",
-        items=gr2_extra_flags,
-        default=("DISABLED")
-    )
-
-    def execute(self, context):
-        obj = context.object
-        if self.flag == "RIGID":
-            obj["rigid"] = True
-            if "cloth" in obj:
-                del obj["cloth"]
-            if "meshproxy" in obj:
-                del obj["meshproxy"]
-            if "rigidcloth" in obj:
-                del obj["rigidcloth"]
-        elif self.flag == "CLOTH":
-            obj["cloth"] = True
-            if "rigid" in obj:
-                del obj["rigid"]
-            if "meshproxy" in obj:
-                del obj["meshproxy"]
-            if "rigidcloth" in obj:
-                del obj["rigidcloth"]
-        elif self.flag == "MESHPROXY":
-            obj["meshproxy"] = True
-            if "rigid" in obj:
-                del obj["rigid"]
-            if "cloth" in obj:
-                del obj["cloth"]
-            if "rigidcloth" in obj:
-                del obj["rigidcloth"]
-        elif self.flag == "RIGIDCLOTH":
-            obj["rigidcloth"] = True
-            if "rigid" in obj:
-                del obj["rigid"]
-            if "cloth" in obj:
-                del obj["cloth"]
-            if "meshproxy" in obj:
-                del obj["meshproxy"]
-        else:
-            if "rigid" in obj:
-                del obj["rigid"]
-            if "cloth" in obj:
-                del obj["cloth"]
-            if "meshproxy" in obj:
-                del obj["meshproxy"]
-            if "rigidcloth" in obj:
-                del obj["rigidcloth"]
-        self.flag = "DISABLED"
-        return {'FINISHED'}
-
-    def invoke(self, context, event):
-        if "rigid" in context.object:
-            self.flag = "RIGID"
-        elif "cloth" in context.object:
-            self.flag = "CLOTH"
-        elif "meshproxy" in context.object:
-            self.flag = "MESHPROXY"
-        elif "rigidcloth" in context.object:
-            self.flag = "RIGIDCLOTH"
-        else:
-            self.flag = "DISABLED"
-        
-        wm = context.window_manager
-        return wm.invoke_props_dialog(self)
-    
-    def draw(self, context):
-        self.layout.prop(self, "flag")
-
 def menu_func(self, context):
     self.layout.operator(DIVINITYEXPORTER_OT_export_collada.bl_idname, text="DOS2/BG3 Collada (.dae, .gr2)")
 
 addon_keymaps = []
-
-def draw_export_options(self, context):
-    col = self.layout.column()
-    col.label(text="DOS2DE Collada Settings")
-    col.operator(DIVINITYEXPORTER_OT_set_extra_flags.bl_idname)
 
 added_export_options = False
 
