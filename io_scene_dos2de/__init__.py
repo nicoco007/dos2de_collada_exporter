@@ -25,13 +25,10 @@ import bmesh
 import os
 import os.path
 import subprocess
-import addon_utils
 
-from bpy.types import Operator, AddonPreferences, PropertyGroup, UIList
+from bpy.types import Operator, AddonPreferences, PropertyGroup, UIList, Panel
 from bpy.props import StringProperty, BoolProperty, FloatProperty, EnumProperty, CollectionProperty, PointerProperty, IntProperty
-
 from bpy_extras.io_utils import ExportHelper
-
 from bpy.app.handlers import persistent
 
 from math import radians, degrees
@@ -40,11 +37,11 @@ from mathutils import Euler, Matrix
 from . import export_dae
 
 bl_info = {
-    "name": "Divinity Collada Exporter",
-    "author": "LaughingLeader",
+    "name": "DOS2/BG3 Collada Exporter",
+    "author": "LaughingLeader / Norbyte",
     "blender": (3, 6, 0),
     "location": "File > Import-Export",
-    "description": ("Export Collada/Granny files for Divinity: Original Sin 2 - Definitive Edition."),
+    "description": ("Export Collada/Granny files for Divinity Original Sin / Baldur's Gate 3."),
     "warning": "",
     "doc_url": "",
     "tracker_url": "",
@@ -1699,7 +1696,7 @@ class DIVINITYEXPORTER_OT_set_extra_flags(Operator):
         self.layout.prop(self, "flag")
 
 def menu_func(self, context):
-    self.layout.operator(DIVINITYEXPORTER_OT_export_collada.bl_idname, text="DOS2DE Collada (.dae, .gr2)")
+    self.layout.operator(DIVINITYEXPORTER_OT_export_collada.bl_idname, text="DOS2/BG3 Collada (.dae, .gr2)")
 
 addon_keymaps = []
 
@@ -1710,20 +1707,82 @@ def draw_export_options(self, context):
 
 added_export_options = False
 
-@persistent
-def leaderhelpers_register_exportdraw(scene):
-    if hasattr(scene, "llexport_object_drawhandler"):
-        global added_export_options
-        if added_export_options is False:
-            try:
-                funclist = getattr(scene, "llexport_object_drawhandler", None)
-                if funclist is not None:
-                    funclist.add(draw_export_options)
-            except Exception as e:
-                print("[DivinityColladaExporter:leaderhelpers_register_exportdraw] Error adding draw function to list:\nError:\n{}".format(e))
-            bpy.app.handlers.scene_update_post.remove(leaderhelpers_register_exportdraw)
-            added_export_options = True
+class LSMeshProperties(PropertyGroup):
+    rigid: BoolProperty(
+        name="Rigid",
+        default = False
+        )
+    cloth: BoolProperty(
+        name="Cloth",
+        default = False
+        )
+    mesh_proxy: BoolProperty(
+        name="Mesh Proxy",
+        default = False
+        )
+    proxy: BoolProperty(
+        name="Proxy Geometry",
+        default = False
+        )
+    spring: BoolProperty(
+        name="Spring",
+        default = False
+        )
+    occluder: BoolProperty(
+        name="Occluder",
+        default = False
+        )
+    impostor: BoolProperty(
+        name="Impostor",
+        default = False
+        )
+    lod: IntProperty(
+        name="LOD Level",
+        min = 0,
+        max = 10,
+        default = 0
+        )
+    lod_distance: FloatProperty(
+        name="LOD Distance",
+        min = 0.0,
+        default = 0.0
+        )
 
+class LSArmatureProperties(PropertyGroup):
+    skeleton_resource_id: StringProperty(
+        name="Skeleton Resource UUID",
+        default = ""
+        )
+
+class OBJECT_PT_LSPropertyPanel(Panel):
+    bl_label = "BG3 Settings"
+    bl_idname = "OBJECT_PT_ls_property_panel"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "object"
+    
+    def draw(self, context):
+        layout = self.layout
+        if context.active_object.type == "MESH":
+            props = context.active_object.data.ls_properties
+
+            box = layout.box()
+            box.label(text="Mesh Type")
+
+            row = box.grid_flow()
+            row.prop(props, "rigid")
+            row.prop(props, "cloth")
+            row.prop(props, "mesh_proxy")
+            row.prop(props, "proxy")
+            row.prop(props, "spring")
+            row.prop(props, "occluder")
+            row.prop(props, "impostor")
+
+            layout.prop(props, "lod")
+            layout.prop(props, "lod_distance")
+        elif context.active_object.type == "ARMATURE":
+            props = context.active_object.data.ls_properties
+            layout.prop(props, "skeleton_resource_id")
 
 classes = (
     ProjectData,
@@ -1733,45 +1792,43 @@ classes = (
     DIVINITYEXPORTER_OT_export_collada,
     DIVINITYEXPORTER_OT_add_project,
     DIVINITYEXPORTER_OT_remove_project,
-    DIVINITYEXPORTER_OT_set_extra_flags,
     DIVINITYEXPORTER_UL_project_list,
-    DIVINITYEXPORTER_AddonPreferences
+    DIVINITYEXPORTER_AddonPreferences,
+    LSMeshProperties,
+    LSArmatureProperties,
+    OBJECT_PT_LSPropertyPanel
 )
 
 def register():
-    bpy.types.TOPBAR_MT_file_import.append(menu_func)
+    bpy.types.TOPBAR_MT_file_export.append(menu_func)
 
     for cls in classes:
         bpy.utils.register_class(cls)
+
+    bpy.types.Mesh.ls_properties = PointerProperty(type=LSMeshProperties)
+    bpy.types.Armature.ls_properties = PointerProperty(type=LSArmatureProperties)
 
     wm = bpy.context.window_manager
     km = wm.keyconfigs.addon.keymaps.new('Window', space_type='EMPTY', region_type='WINDOW', modal=False)
 
     kmi = km.keymap_items.new(DIVINITYEXPORTER_OT_export_collada.bl_idname, 'E', 'PRESS', ctrl=True, shift=True)
-    #print(__name__)
-    #kmi.properties.name = DIVINITYEXPORTER_OT_export_collada.bl_idname
     addon_keymaps.append((km, kmi))
-    
-    #bpy.app.handlers.scene_update_post.append(leaderhelpers_register_exportdraw)
 
 def unregister():
-    #bpy.utils.unregister_class(DIVINITYEXPORTER_OT_export_collada)
-    bpy.types.TOPBAR_MT_file_import.remove(menu_func)
+    bpy.types.TOPBAR_MT_file_export.remove(menu_func)
 
     for cls in classes:
         bpy.utils.unregister_class(cls)
 
-    try:
-        bpy.app.handlers.scene_update_post.remove(leaderhelpers_register_exportdraw)
+    del bpy.types.Armature.ls_properties
+    del bpy.types.Mesh.ls_properties
 
-        wm = bpy.context.window_manager
-        kc = wm.keyconfigs.addon
-        if kc:
-            for km, kmi in addon_keymaps:
-                km.keymap_items.remove(kmi)
-        addon_keymaps.clear()
-    except:
-        pass
+    wm = bpy.context.window_manager
+    kc = wm.keyconfigs.addon
+    if kc:
+        for km, kmi in addon_keymaps:
+            km.keymap_items.remove(kmi)
+    addon_keymaps.clear()
 
 if __name__ == "__main__":
     register()

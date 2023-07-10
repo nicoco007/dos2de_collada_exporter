@@ -165,30 +165,6 @@ class DaeExporter:
                 sections[k] = v
         self.sections = sections
 
-    def mesh_get_property(self, obj, mesh, property):
-        val = mesh.get(property, None)
-        if val is None:
-            val = mesh.get(property.capitalize(), None)
-        if val is None and obj is not None:
-            val = obj.get(property, None)
-        if val is None and obj is not None:
-            val = obj.get(property.capitalize(), None)
-        return val
-
-    def mesh_get_flag(self, obj, mesh, property, default):
-        val = self.mesh_get_property(obj, mesh, property)
-        if val is not None and isinstance(val, bool):
-            return val
-        else:
-            return default
-
-    def mesh_get_float(self, obj, mesh, property, default):
-        val = self.mesh_get_property(obj, mesh, property)
-        if val is not None and isinstance(val, (int, float)):
-            return val
-        else:
-            return default
-
     def export_mesh(self, node, armature=None, skeyindex=-1, skel_source=None,
                     custom_name=None):
         mesh = node.data
@@ -704,32 +680,30 @@ class DaeExporter:
             self.writel(S_GEOM, 4, "<technique profile=\"LSTools\">")
             
             obj_check = bpy.data.objects[node.name]
-            mesh_check = bpy.data.meshes[mesh.name]
 
             extra_settings = self.config["divine_settings"].gr2_settings.extras
 
-            if self.mesh_get_flag(obj_check, mesh_check, "rigid", False) or extra_settings == "RIGID":
+            ls_props = obj_check.data.ls_properties
+            if ls_props.rigid or extra_settings == "RIGID":
                 self.writel(S_GEOM, 5, "<DivModelType>Rigid</DivModelType>")
-            if self.mesh_get_flag(obj_check, mesh_check, "cloth", False) or extra_settings == "CLOTH":
+            if ls_props.cloth or extra_settings == "CLOTH":
                 self.writel(S_GEOM, 5, "<DivModelType>Cloth</DivModelType>")
-            if self.mesh_get_flag(obj_check, mesh_check, "meshproxy", False) or self.mesh_get_flag(obj_check, mesh_check, "MeshProxy", False) or extra_settings == "MESHPROXY":
+            if ls_props.mesh_proxy or extra_settings == "MESHPROXY":
                 self.writel(S_GEOM, 5, "<DivModelType>MeshProxy</DivModelType>")
-            if self.mesh_get_flag(obj_check, mesh_check, "proxy", False):
+            if ls_props.proxy:
                 self.writel(S_GEOM, 5, "<DivModelType>ProxyGeometry</DivModelType>")
-            if self.mesh_get_flag(obj_check, mesh_check, "spring", False):
+            if ls_props.spring:
                 self.writel(S_GEOM, 5, "<DivModelType>Spring</DivModelType>")
-            if self.mesh_get_flag(obj_check, mesh_check, "occluder", False):
+            if ls_props.occluder:
                 self.writel(S_GEOM, 5, "<DivModelType>Occluder</DivModelType>")
-            if self.mesh_get_flag(obj_check, mesh_check, "impostor", False):
+            if ls_props.impostor:
                 self.writel(S_GEOM, 5, "<IsImpostor>1</IsImpostor>")
 
-            lod = self.mesh_get_float(obj_check, mesh_check, "lod", 0) or self.mesh_get_float(obj_check, mesh_check, "LOD", 0)
-            if lod != 0:
-                self.writel(S_GEOM, 5, "<LOD>" + str(lod) + "</LOD>")
+            if ls_props.lod != 0:
+                self.writel(S_GEOM, 5, "<LOD>" + str(ls_props.lod) + "</LOD>")
 
-            lodDistance = self.mesh_get_float(obj_check, mesh_check, "loddistance", 0) or self.mesh_get_float(obj_check, mesh_check, "LODDistance", 0) or self.mesh_get_float(obj_check, mesh_check, "LodDistance", 0)
-            if lodDistance != 0:
-                self.writel(S_GEOM, 5, "<LODDistance>" + str(lodDistance) + "</LODDistance>")
+            if ls_props.lod_distance != 0:
+                self.writel(S_GEOM, 5, "<LODDistance>" + str(ls_props.lod_distance) + "</LODDistance>")
 
             self.writel(S_GEOM, 4, "</technique>")
             self.writel(S_GEOM, 3, "</extra>")
