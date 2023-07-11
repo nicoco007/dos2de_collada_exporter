@@ -1,16 +1,17 @@
-# DOS2DE Collada Exporter for Blender 2.79
+# BG3/DOS2 Collada Exporter for Blender 3.6
 
-An addon for Blender that allows you to export dae/gr2 files for the game Divinity: Original Sin 2 - Definitive Edition.
+An addon for Blender that allows you to import and export DAE/GR2 files for Baldur's Gate 3 and Divinity: Original Sin 2.
 
 _[Be sure to grab the LaughingLeader Helpers addon for layer support and additional export setup on individual objects.](https://github.com/LaughingLeader/laughingleader_blender_helpers)_
 
 ## Features:  
 * Export to dae, or export to gr2 if the path to divine.exe is set.
-* Automatically rotate the object for DOS2's Y-Up world (Blender is Z-Up).
+* Automatically rotate the object for DOS2/BG3's Y-Up world (Blender is Z-Up).
 * Use the layer name, active object name, or action name (animations) when exporting.
 * Use built-in presets for quick exporting.
-* Specify project pathways to skip having to manually navigate to the correct folder when exporting.
+* Specify project paths to skip having to manually navigate to the correct folder when exporting.
 * Specific Custom Properties on meshes are exported (Rigid, Cloth, MeshProxy). You can also globally flag your meshes with one of these flags.
+* BG3-specific settings are imported/exported: LOD, LOD distance, Skeleton resource info, mesh flags (Spring, Occluder, ...)
 
 ## Installing
 
@@ -19,15 +20,15 @@ _[Be sure to grab the LaughingLeader Helpers addon for layer support and additio
 * Save the addon somewhere where you can find it again.
 * Extract the zip.
 * Copy the folder `io_scene_dos2de`. Make sure this is the folder with the scripts under it (`io_scene_dos2de\__init__.py` etc).
-* Paste the `io_scene_dos2de` folder into your addons folder. Default pathway:
+* Paste the `io_scene_dos2de` folder into your addons folder. Default path:
 ```
-%APPDATA%\Blender Foundation\Blender\2.79\scripts\addons
+%APPDATA%\Blender Foundation\Blender\3.6\scripts\addons
 ```
 * (Optional) Refer to Blender's guide for installing addons here: [Install from File](https://docs.blender.org/manual/en/latest/preferences/addons.html#header). It has a tip section for setting up a separate scripts/addons folder, outside of your appdata.
 
 ### Cloning  
 * In Blender, navigate to File -> User Preferences -> File.
-* The pathway for "Scripts" is where Blender will read new addon folders from. Add a pathway if it's blank.
+* The path for "Scripts" is where Blender will read new addon folders from. Add a path if it's blank.
 * [Clone the repository](https://help.github.com/articles/cloning-a-repository/).
 * Create a junction to the `io_scene_dos2de` inside your scripts/addons folder.
   * You can create a junction with this command line command:
@@ -53,7 +54,7 @@ mklink /j "C:\Path1\io_scene_dos2de" "C:\Path2\scripts\addons\io_scene_dos2de"
 ## User Preferences Settings
 
 ### Divine Path  
-This is the pathway to divine.exe, bundled with Norbyte's Export Tool. If set, the addon can export to the GR2 format, using divine.
+This is the path to divine.exe, bundled with Norbyte's Export Tool. If set, the addon can export to the GR2 format, using divine.
 
 ### Convert to GR2 by Default  
 If checked, "Convert to GR2" will automatically be checked when exporting. Requires divine.exe's path to be set.
@@ -62,13 +63,13 @@ If checked, "Convert to GR2" will automatically be checked when exporting. Requi
 If set, the addon will default to the selected preset when opening it up for the first time.
 
 ### Projects  
-Project pathways can be configured for quicker exporting. 
+Project paths can be configured for quicker exporting. 
 
 #### Project Folder  
-The "root" folder your blend files will be under. This is a parent folder the addon will compare your blend file's pathway against.
+The "root" folder your blend files will be under. This is a parent folder the addon will compare your blend file's path against.
 
 #### Export Folder  
-When the above folder is found in the blend's pathway, this folder will be the default root when exporting.
+When the above folder is found in the blend's path, this folder will be the default root when exporting.
 
 ### Use Preset Type for Export Subfolder  
 If checked and a project folder is detected, the current preset will automatically determine the subfolder. For instance, if you have a project folder set, and an export folder set to Public/Modname_UUID/Assets, then selecting the "Model" preset defaults the exported file to "Assets/Model".

@@ -457,7 +457,7 @@ class DivineInvoker:
 
 
 class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
-    """Export to Collada with Divinity-specific options (.dae)"""
+    """Export to Collada/GR2 with Divinity/Baldur's Gate-specific options (.dae/.gr2)"""
     bl_idname = "export_scene.dos2de_collada"
     bl_label = "Export Collada/GR2"
     bl_options = {"PRESET", "REGISTER", "UNDO"}
@@ -1706,6 +1706,7 @@ class ColladaMetadataLoader:
 
 
 class DIVINITYEXPORTER_OT_import_collada(Operator, ImportHelper):
+    """Import Divinity/Baldur's Gate models (Collada/GR2)"""
     bl_idname = "import_scene.dos2de_collada"
     bl_label = "Import Collada/GR2"
     bl_options = {"PRESET", "REGISTER", "UNDO"}
