@@ -20,6 +20,8 @@ if "bpy" in locals():
     if "export_dae" in locals():
         importlib.reload(export_dae) # noqa
 
+from pathlib import Path
+import tempfile
 import bpy
 import bmesh
 import os
@@ -40,6 +42,7 @@ bl_info = {
     "name": "DOS2/BG3 Collada Exporter",
     "author": "LaughingLeader / Norbyte",
     "blender": (3, 6, 0),
+    "version": (2, 0, 0),
     "location": "File > Import-Export",
     "description": ("Export Collada/Granny files for Divinity Original Sin / Baldur's Gate 3."),
     "warning": "",
@@ -57,8 +60,20 @@ gr2_extra_flags = (
     ("RIGIDCLOTH", "Rigid&Cloth", "For meshes lacking an armature modifier that also contain cloth physics. Typically used for weapons")
 )
 
-def report(op, msg, reportType="WARNING"):
-    op.report(set((reportType, )), msg)
+game_versions = (
+    ("dos", "DOS", "Divinity: Original Sin"),
+    ("dosee", "DOS: EE", "Divinity: Original Sin - Enhanced Edition"),
+    ("dos2", "DOS 2", "Divinity: Original Sin 2"),
+    ("dos2de", "DOS 2: DE", "Divinity: Original Sin 2 - Definitive Edition"),
+    ("bg3", "BG 3", "Baldur's Gate 3"),
+    ("unset", "Unset", "Unset")
+)
+
+current_operator = None
+
+def report(msg, reportType="WARNING"):
+    if current_operator is not None:
+        current_operator.report(set((reportType, )), msg)
     print("{} ({})".format(msg, reportType))
 
 def get_prefs(context):
@@ -225,18 +240,10 @@ class Divine_ExportSettings(PropertyGroup):
         name="GR2 Export Options"
     )
 
-    game_enums = (
-        ("dos", "DOS", "Divinity: Original Sin"),
-        ("dosee", "DOSEE", "Divinity: Original Sin - Enhanced Edition"),
-        ("dos2", "DOS2", "Divinity: Original Sin 2"),
-        ("dos2de", "DOS2DE", "Divinity: Original Sin 2 - Definitive Edition"),
-        ("bg3", "BG3", "Baldur's Gate 3")
-    )
-
     game: EnumProperty(
         name="Game",
         description="The target game. Currently determines the model format type",
-        items=game_enums,
+        items=game_versions,
         default=("dos2de")
     )
 
@@ -341,10 +348,126 @@ class Divine_ExportSettings(PropertyGroup):
         for prop in self.drawable_props:
             obj.prop(self, prop)
 
+class DivineInvoker:
+    def __init__(self, addon_prefs, divine_prefs):
+        self.addon_prefs = addon_prefs
+        self.divine_prefs = divine_prefs
+
+    def check_lslib(self):
+        if self.addon_prefs.lslib_path is None or self.addon_prefs.lslib_path == "":
+            report("LSLib path was not set up in addon preferences. Cannot convert to GR2.", "ERROR")
+            return False
+            
+        lslib_path = Path(self.addon_prefs.lslib_path)
+        if not lslib_path.is_file():
+            report("The LSLib path set in addon preferences is invalid. Cannot convert to GR2.", "ERROR")
+            return False
+        
+        return True
+
+    def build_gr2_options(self):
+        export_str = ""
+        # Possible args:
+        #"export-normals;export-tangents;export-uvs;export-colors;deduplicate-vertices;
+        # deduplicate-uvs;recalculate-normals;recalculate-tangents;recalculate-iwt;flip-uvs;
+        # force-legacy-version;compact-tris;build-dummy-skeleton;apply-basis-transforms;conform"
+
+        divine_args = {
+            "xflip_skeletons"           : "x-flip-skeletons",
+            "xflip_meshes"              : "x-flip-meshes",
+            "export_normals"            : "export-normals",
+            "export_tangents"           : "export-tangents",
+            "export_uvs"                : "export-uvs",
+            "export_colors"             : "export-colors",
+            "deduplicate_vertices"      : "deduplicate-vertices",
+            "deduplicate_uvs"           : "deduplicate-uvs",
+            "recalculate_normals"       : "recalculate-normals",
+            "recalculate_tangents"      : "recalculate-tangents",
+            "recalculate_iwt"           : "recalculate-iwt",
+            "flip_uvs"                  : "flip-uvs",
+            "ignore_uv_nan"             : "ignore-uv-nan"
+        }
+
+        gr2_args = {
+            "force_legacy"              : "force-legacy-version",
+            "store_indices"             : "compact-tris",
+            "create_dummyskeleton"      : "build-dummy-skeleton",
+            "yup_conversion"            : "y-up-skeletons",
+            "apply_basis_transforms"    : "apply-basis-transforms"
+            #"conform"					: "conform"
+        }
+
+        for prop,arg in divine_args.items():
+            val = getattr(self.divine_prefs, prop, False)
+            if val == True:
+                export_str += "-e " + arg + " "
+
+        gr2_settings = self.divine_prefs.gr2_settings
+
+        for prop,arg in gr2_args.items():
+            val = getattr(gr2_settings, prop, False)
+            if val == True:
+                export_str += "-e " + arg + " "
+
+        return export_str
+
+    def dae_to_gr2(self, collada_path):
+        if not self.check_lslib():
+            return False
+        gr2_path = str.replace(collada_path, ".dae", ".gr2")
+        gr2_options_str = self.build_gr2_options()
+        divine_exe = '"{}"'.format(self.addon_prefs.lslib_path)
+        game_ver = bpy.context.scene.ls_properties.game
+        proccess_args = "{} --loglevel all -g {} -s {} -d {} -i dae -o gr2 -a convert-model {}".format(
+            divine_exe, game_ver, '"{}"'.format(collada_path), '"{}"'.format(gr2_path), gr2_options_str
+        )
+        
+        print("[DOS2DE-Collada] Starting GR2 conversion using divine.exe.")
+        print("[DOS2DE-Collada] Sending command: {}".format(proccess_args))
+
+        process = subprocess.run(proccess_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+
+        print(process.stdout)
+        print(process.stderr)
+        
+        if process.returncode != 0:
+            error_message = "Failed to convert Collada to GR2. {}".format(
+                '\n'.join(process.stdout.splitlines()[-1:]) + '\n' + process.stderr)
+            report(error_message, "ERROR")
+        else:
+            if self.divine_prefs.delete_collada and os.path.isfile(collada_path):
+                print("[DOS2DE-Collada] GR2 conversion successful. Deleting temporary collada file '{}'.".format(collada_path))
+                os.remove(collada_path)
+
+    def gr2_to_dae(self, gr2_path, collada_path):
+        if not self.check_lslib():
+            return False
+        divine_exe = '"{}"'.format(self.addon_prefs.lslib_path)
+        proccess_args = "{} --loglevel all -g bg3 -s {} -d {} -i gr2 -o dae -a convert-model -e flip-uvs".format(
+            divine_exe, '"{}"'.format(gr2_path), '"{}"'.format(collada_path)
+        )
+        
+        print("[DOS2DE-Collada] Starting DAE conversion using divine.exe.")
+        print("[DOS2DE-Collada] Sending command: {}".format(proccess_args))
+
+        process = subprocess.run(proccess_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+
+        print(process.stdout)
+        print(process.stderr)
+        
+        if process.returncode != 0:
+            error_message = "Failed to convert GR2 to Collada. {}".format(
+                '\n'.join(process.stdout.splitlines()[-1:]) + '\n' + process.stderr)
+            report(error_message, "ERROR")
+            return False
+        else:
+            return True
+
+
 class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
     """Export to Collada with Divinity-specific options (.dae)"""
     bl_idname = "export_scene.dos2de_collada"
-    bl_label = "Export Divinity DAE"
+    bl_label = "Export Collada/GR2"
     bl_options = {"PRESET", "REGISTER", "UNDO"}
 
     filename_ext: StringProperty(
@@ -404,52 +527,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
     log_message: StringProperty(options={"HIDDEN"})
 
     gr2_default_enabled_ignore: BoolProperty(default=False, options={"HIDDEN"})
-
-    def build_gr2_options(self):
-        export_str = ""
-        # Possible args:
-        #"export-normals;export-tangents;export-uvs;export-colors;deduplicate-vertices;
-        # deduplicate-uvs;recalculate-normals;recalculate-tangents;recalculate-iwt;flip-uvs;
-        # force-legacy-version;compact-tris;build-dummy-skeleton;apply-basis-transforms;conform"
-
-        divine_args = {
-            "xflip_skeletons"           : "x-flip-skeletons",
-            "xflip_meshes"              : "x-flip-meshes",
-            "export_normals"            : "export-normals",
-            "export_tangents"           : "export-tangents",
-            "export_uvs"                : "export-uvs",
-            "export_colors"             : "export-colors",
-            "deduplicate_vertices"      : "deduplicate-vertices",
-            "deduplicate_uvs"           : "deduplicate-uvs",
-            "recalculate_normals"       : "recalculate-normals",
-            "recalculate_tangents"      : "recalculate-tangents",
-            "recalculate_iwt"           : "recalculate-iwt",
-            "flip_uvs"                  : "flip-uvs",
-            "ignore_uv_nan"             : "ignore-uv-nan"
-        }
-
-        gr2_args = {
-            "force_legacy"              : "force-legacy-version",
-            "store_indices"             : "compact-tris",
-            "create_dummyskeleton"      : "build-dummy-skeleton",
-            "yup_conversion"            : "y-up-skeletons",
-            "apply_basis_transforms"    : "apply-basis-transforms"
-            #"conform"					: "conform"
-        }
-
-        for prop,arg in divine_args.items():
-            val = getattr(self.divine_settings, prop, False)
-            if val == True:
-                export_str += "-e " + arg + " "
-
-        gr2_settings = self.divine_settings.gr2_settings
-
-        for prop,arg in gr2_args.items():
-            val = getattr(gr2_settings, prop, False)
-            if val == True:
-                export_str += "-e " + arg + " "
-
-        return export_str;
 
     def update_filepath(self, context):
         if self.directory == "":
@@ -672,6 +749,10 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
     anim_export_all_separate: BoolProperty(
         name="Export All Actions",
         description="Export all actions as separate animation files",
+        default=False
+        )
+    use_anim_action_all = BoolProperty(name="All Actions",
+        description=("Export all actions for the first armature found in separate DAE files"),
         default=False
         )
     use_anim_skip_noexp: BoolProperty(
@@ -934,7 +1015,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         if self.log_message != "":
             print(self.log_message)
-            report(self, "{}".format(self.log_message), "WARNING")
+            report("{}".format(self.log_message), "WARNING")
             self.log_message = ""
 
         if self.convert_gr2 == False:
@@ -1111,8 +1192,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                         mod.object = parent
                         print("   [DOS2DE-Export] Updated armature modifier to point to the copied armature {} for child {}".format(parent.name, copy.name))
             else:
-                report(self, 
-                 "[DOS2DE-Exporter] Object '{}' has a parent '{}' that will not export. Please unparent it or adjust the parent so it will export.".format(
+                report("[DOS2DE-Exporter] Object '{}' has a parent '{}' that will not export. Please unparent it or adjust the parent so it will export.".format(
                      copy.name, parent.name))
 
         return copy
@@ -1121,6 +1201,14 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         pass
 
     def execute(self, context):
+        global current_operator
+        try:
+            current_operator = self
+            return self.really_execute(context)
+        finally:
+            current_operator = None
+
+    def really_execute(self, context):
         if not self.filepath:
             raise Exception("filepath not set")
 
@@ -1165,7 +1253,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                 if parent_not_exporting:
                     msg = "[DOS2DE-Exporter] Object '{}' has a parent '{}' that will not export. Unparenting copy and preserving transform.".format(
                         copy.name, obj.parent.name)
-                    report(self, msg)
+                    report(msg)
                     bpy.ops.object.select_all(action='DESELECT')
                     bpy.context.view_layer.objects.active = copy
                     copy.select_set(True)
@@ -1357,7 +1445,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                             if export_dae.save(self, context, [armature], filepath=export_filepath, **keywords) == {"FINISHED"}:
                                 exported_pathways.append(export_filepath)
                             else:
-                                report(self, "[DOS2DE-Exporter] Failed to export '{}'.".format(export_filepath))
+                                report("[DOS2DE-Exporter] Failed to export '{}'.".format(export_filepath))
                     result = {"FINISHED"}
                 else:
                     single_mode = True
@@ -1382,7 +1470,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                                 result = {"FINISHED"}
                             else:
                                 result = {"ERROR"}
-                                report(self, "[DOS2DE-Exporter] Failed to export '{}'.".format(export_filepath))
+                                report( "[DOS2DE-Exporter] Failed to export '{}'.".format(export_filepath))
                 else:
                     single_mode = True
         if single_mode:
@@ -1440,39 +1528,11 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             print("[DOS2DE-Collada] Error setting viewport mode:\n{}".format(e))
 
         if self.convert_gr2:
-            if (addon_prefs.lslib_path is not None and addon_prefs.lslib_path != "" 
-                and os.path.isfile(addon_prefs.lslib_path)):
-                    for collada_file in exported_pathways:
-                        gr2_path = str.replace(collada_file, ".dae", ".gr2")
+            divine = DivineInvoker(addon_prefs, self.divine_settings)
+            for collada_file in exported_pathways:
+                divine.dae_to_gr2(collada_file)
 
-                        gr2_options_str = self.build_gr2_options()
-
-                        divine_exe = '"{}"'.format(addon_prefs.lslib_path)
-
-                        proccess_args = "{} --loglevel all -g {} -s {} -d {} -i dae -o gr2 -a convert-model {}".format(
-                            divine_exe, self.divine_settings.game, '"{}"'.format(collada_file), '"{}"'.format(gr2_path), gr2_options_str
-                        )
-                        
-                        print("[DOS2DE-Collada] Starting GR2 conversion using divine.exe.")
-                        print("[DOS2DE-Collada] Sending command: {}".format(proccess_args))
-
-                        process = subprocess.run(proccess_args, 
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
-
-                        print(process.stdout)
-                        
-                        if process.returncode != 0:
-                            #raise Exception("Error converting DAE to GR2: \"{}\"{}".format(process.stderr, process.stdout))
-                            error_message = "[DOS2DE-Collada] [ERROR:{}] Error converting DAE to GR2. {}".format(process.returncode, '\n'.join(process.stdout.splitlines()[-1:]))
-                            report(self, error_message, "ERROR")
-                            print(error_message)
-                        else:
-                            if self.divine_settings.delete_collada and os.path.isfile(collada_file):
-                                print("[DOS2DE-Collada] GR2 conversion successful. Deleting temporary collada file '{}'.".format(collada_file))
-                                os.remove(collada_file)
-            else:
-                raise Exception("[DOS2DE-Collada] LSLib not found. Cannot convert to GR2.")
-
+        report("Export completed successfully.", "INFO")
         return result
 
 addon_keymaps = []
@@ -1526,6 +1586,14 @@ class LSArmatureProperties(PropertyGroup):
         default = ""
         )
 
+class LSSceneProperties(PropertyGroup):
+    game: EnumProperty(
+        name="Game",
+        description="The target game. Currently determines the model format type",
+        items=game_versions,
+        default=("bg3")
+    )
+
 class OBJECT_PT_LSPropertyPanel(Panel):
     bl_label = "BG3 Settings"
     bl_idname = "OBJECT_PT_ls_property_panel"
@@ -1557,9 +1625,109 @@ class OBJECT_PT_LSPropertyPanel(Panel):
             layout.prop(props, "skeleton_resource_id")
 
 
-class DIVINITYEXPORTER_OT_import_collada(bpy.types.Operator, ImportHelper):
+
+class SCENE_PT_LSPropertyPanel(Panel):
+    bl_label = "DOS2/BG3 Settings"
+    bl_idname = "SCENE_PT_ls_property_panel"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "scene"
+    
+    def draw(self, context):
+        layout = self.layout
+        props = context.scene.ls_properties
+        layout.prop(props, "game")
+
+
+
+class ColladaMetadataLoader:
+    root = None
+    SCHEMA = "{http://www.collada.org/2005/11/COLLADASchema}"
+
+    TAG_TO_GAME = {
+        "DivinityOriginalSin": "dos",
+        "DivinityOriginalSinEE": "dosee",
+        "DivinityOriginalSin2": "dos2",
+        "DivinityOriginalSin2DE": "dos2de",
+        "BaldursGate3PrePatch8": "bg3",
+        "BaldursGate3": "bg3",
+        "Unset": "unset",
+    }
+
+    def load_root_profile(self, context):
+        profile = self.root.find(f"./{self.SCHEMA}extra/{self.SCHEMA}technique[@profile='LSTools']")
+        if profile is None:
+            report("LSLib profile data not found in Collada export; make sure you're using LSLib v1.16 or later!", "ERROR")
+            return
+        
+        props = context.scene.ls_properties
+        for ele in list(profile):
+            if ele.tag == 'Game':
+                props.game = self.TAG_TO_GAME[ele.text]
+
+
+    def find_anim_settings(self):
+        for anim in self.root.findall(f"./{self.SCHEMA}library_animations/{self.SCHEMA}animation"):
+            settings = anim.find(f"{self.SCHEMA}extra/{self.SCHEMA}technique[@profile='LSTools']")
+            if settings is not None:
+                return settings
+
+        return None
+    
+    def load_mesh_profile(self, geom, settings):
+        mesh = bpy.data.meshes[geom.attrib['name']]
+        props = mesh.ls_properties
+        for ele in list(settings):
+            if ele.tag == 'DivModelType':
+                if ele.text == 'Rigid':
+                    props.rigid = True
+                elif ele.text == 'Cloth':
+                    props.cloth = True
+                elif ele.text == 'MeshProxy':
+                    props.mesh_proxy = True
+                elif ele.text == 'ProxyGeometry':
+                    props.proxy = True
+                elif ele.text == 'Spring':
+                    props.spring = True
+                elif ele.text == 'Occluder':
+                    props.occluder = True
+            elif ele.tag == 'IsImpostor' and ele.text == '1':
+                props.impostor = True
+            elif ele.tag == 'LOD':
+                props.lod = int(ele.text)
+            elif ele.tag == 'LODDistance':
+                props.lod_distance = float(ele.text)
+    
+    def load_mesh_profiles(self):
+        for geom in self.root.findall(f"./{self.SCHEMA}library_geometries/{self.SCHEMA}geometry"):
+            settings = geom.find(f"{self.SCHEMA}mesh/{self.SCHEMA}extra/{self.SCHEMA}technique[@profile='LSTools']")
+            if settings is not None:
+                self.load_mesh_profile(geom, settings)
+
+    def load_anim_profile(self, context, anim_settings):
+        skel = anim_settings.find('SkeletonResourceID')
+        skeleton_id = ""
+        if skel is not None:
+            skeleton_id = skel.text
+
+        for obj in context.scene.objects:
+            if obj.type == "ARMATURE" and obj.select_get():
+                props = obj.data.ls_properties
+                props.skeleton_resource_id = skeleton_id
+    
+    def load(self, context, collada_path):
+        self.root = et.parse(collada_path).getroot()
+        self.load_root_profile(context)
+        anim_settings = self.find_anim_settings()
+        self.load_mesh_profiles()
+        if anim_settings is not None:
+            self.load_anim_profile(context, anim_settings)
+
+
+
+class DIVINITYEXPORTER_OT_import_collada(Operator, ImportHelper):
     bl_idname = "import_scene.dos2de_collada"
-    bl_label = "Import DOS2/BG3 DAE"
+    bl_label = "Import Collada/GR2"
     bl_options = {"PRESET", "REGISTER", "UNDO"}
 
     filename_ext: StringProperty(
@@ -1570,55 +1738,53 @@ class DIVINITYEXPORTER_OT_import_collada(bpy.types.Operator, ImportHelper):
 
     filter_glob: StringProperty(default="*.dae;*.gr2", options={"HIDDEN"})
 
+    def fixup_bones(self, context):
+        for obj in context.scene.objects:
+            if obj.type == "ARMATURE" and obj.select_get():
+                context.view_layer.objects.active = obj
+                bpy.ops.object.mode_set(mode='EDIT')
+                for bone in obj.data.edit_bones:
+                    if len(bone.children) == 1:
+                        bone.tail = bone.children[0].head
+                    elif len(bone.children) == 0 and bone.parent is not None and len(bone.parent.children) == 1:
+                        bone.use_connect = True
+                bpy.ops.object.mode_set(mode='OBJECT')
+
+        
     def execute(self, context):
-        fdir = self.properties.filepath
-        bpy.ops.wm.collada_import(filepath=fdir, custom_normals=True)
-        root = et.parse(fdir).getroot()
+        global current_operator
+        try:
+            current_operator = self
+            return self.really_execute(context)
+        finally:
+            current_operator = None
 
-        anim_settings = None
-        for anim in root.findall("./{http://www.collada.org/2005/11/COLLADASchema}library_animations/{http://www.collada.org/2005/11/COLLADASchema}animation"):
-            settings = anim.find("{http://www.collada.org/2005/11/COLLADASchema}extra/{http://www.collada.org/2005/11/COLLADASchema}technique[@profile='LSTools']")
-            if settings is not None:
-                anim_settings = settings
-                break
+    def really_execute(self, context):
+        input_path = Path(self.properties.filepath)
+        tempfile_path = None
 
-        for geom in root.findall("./{http://www.collada.org/2005/11/COLLADASchema}library_geometries/{http://www.collada.org/2005/11/COLLADASchema}geometry"):
-            settings = geom.find("{http://www.collada.org/2005/11/COLLADASchema}mesh/{http://www.collada.org/2005/11/COLLADASchema}extra/{http://www.collada.org/2005/11/COLLADASchema}technique[@profile='LSTools']")
-            if settings is not None:
-                mesh = bpy.data.meshes[geom.attrib['name']]
-                props = mesh.ls_properties
-                for ele in list(settings):
-                    if ele.tag == 'DivModelType':
-                        if ele.text == 'Rigid':
-                            props.rigid = True
-                        elif ele.text == 'Cloth':
-                            props.cloth = True
-                        elif ele.text == 'MeshProxy':
-                            props.mesh_proxy = True
-                        elif ele.text == 'ProxyGeometry':
-                            props.proxy = True
-                        elif ele.text == 'Spring':
-                            props.spring = True
-                        elif ele.text == 'Occluder':
-                            props.occluder = True
-                    elif ele.tag == 'IsImpostor' and ele.text == '1':
-                        props.impostor = True
-                    elif ele.tag == 'LOD':
-                        props.lod = int(ele.text)
-                    elif ele.tag == 'LODDistance':
-                        props.lod_distance = float(ele.text)
+        if input_path.suffix.lower() == '.gr2':
+            addon_prefs = get_prefs(context)
+            divine = DivineInvoker(addon_prefs, None)
+            temp = tempfile.NamedTemporaryFile(delete=False)
+            temp.close()
+            tempfile_path = Path(temp.name)
+            collada_path = tempfile_path
+            if not divine.gr2_to_dae(str(input_path), str(collada_path)):
+                return{'CANCELLED'}
+        else:
+            collada_path = input_path
 
-        if anim_settings is not None:
-            skel = settings.find('SkeletonResourceID')
-            skeleton_id = ""
-            if skel is not None:
-                skeleton_id = skel.text
+        bpy.ops.wm.collada_import(filepath=str(collada_path), custom_normals=True, fix_orientation=True)
 
-            for obj in context.scene.objects:
-                if obj.type == "ARMATURE" and obj.select_get():
-                    props = obj.data.ls_properties
-                    props.skeleton_resource_id = skeleton_id
+        meta_loader = ColladaMetadataLoader()
+        meta_loader.load(context, str(collada_path))
+        self.fixup_bones(context)
 
+        if tempfile_path is not None:
+            tempfile_path.unlink()
+
+        report("Import completed successfully.", "INFO")
         return{'FINISHED'}
 
 def export_menu_func(self, context):
@@ -1640,7 +1806,9 @@ classes = (
     DIVINITYEXPORTER_AddonPreferences,
     LSMeshProperties,
     LSArmatureProperties,
-    OBJECT_PT_LSPropertyPanel
+    LSSceneProperties,
+    OBJECT_PT_LSPropertyPanel,
+    SCENE_PT_LSPropertyPanel
 )
 
 def register():
@@ -1652,6 +1820,7 @@ def register():
 
     bpy.types.Mesh.ls_properties = PointerProperty(type=LSMeshProperties)
     bpy.types.Armature.ls_properties = PointerProperty(type=LSArmatureProperties)
+    bpy.types.Scene.ls_properties = PointerProperty(type=LSSceneProperties)
 
     wm = bpy.context.window_manager
     km = wm.keyconfigs.addon.keymaps.new('Window', space_type='EMPTY', region_type='WINDOW', modal=False)
@@ -1661,6 +1830,7 @@ def register():
     addon_keymaps.append((km, km_export))
     addon_keymaps.append((km, km_import))
 
+
 def unregister():
     bpy.types.TOPBAR_MT_file_export.remove(export_menu_func)
     bpy.types.TOPBAR_MT_file_import.remove(import_menu_func)
@@ -1668,6 +1838,7 @@ def unregister():
     for cls in classes:
         bpy.utils.unregister_class(cls)
 
+    del bpy.types.Scene.ls_properties
     del bpy.types.Armature.ls_properties
     del bpy.types.Mesh.ls_properties
 

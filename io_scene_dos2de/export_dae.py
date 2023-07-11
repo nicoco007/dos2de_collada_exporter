@@ -1498,7 +1498,7 @@ class DaeExporter:
 
         self.writel(S_ANIM, 0, "<library_animations>")
 
-        if (self.config["use_anim_action_all"] and len(self.skeletons)):
+        if len(self.skeletons):
 
             cached_actions = {}
 
