@@ -247,12 +247,6 @@ class Divine_ExportSettings(PropertyGroup):
         default=("dos2de")
     )
 
-    delete_collada: BoolProperty(
-        name="Delete Exported Collada File",
-        default=True,
-        description="The resulting .dae file will be deleted after being converted to gr2"
-    )
-
     xflip_skeletons: BoolProperty(
         name="X-Flip Skeletons",
         default=False
@@ -411,10 +405,9 @@ class DivineInvoker:
 
         return export_str
 
-    def dae_to_gr2(self, collada_path):
+    def dae_to_gr2(self, collada_path, gr2_path):
         if not self.check_lslib():
             return False
-        gr2_path = str.replace(collada_path, ".dae", ".gr2")
         gr2_options_str = self.build_gr2_options()
         divine_exe = '"{}"'.format(self.addon_prefs.lslib_path)
         game_ver = bpy.context.scene.ls_properties.game
@@ -434,10 +427,9 @@ class DivineInvoker:
             error_message = "Failed to convert Collada to GR2. {}".format(
                 '\n'.join(process.stdout.splitlines()[-1:]) + '\n' + process.stderr)
             report(error_message, "ERROR")
+            return False
         else:
-            if self.divine_prefs.delete_collada and os.path.isfile(collada_path):
-                print("[DOS2DE-Collada] GR2 conversion successful. Deleting temporary collada file '{}'.".format(collada_path))
-                os.remove(collada_path)
+            return True
 
     def gr2_to_dae(self, gr2_path, collada_path):
         if not self.check_lslib():
@@ -526,16 +518,9 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
     update_path_next: BoolProperty(default=False)
     log_message: StringProperty(options={"HIDDEN"})
 
-    gr2_default_enabled_ignore: BoolProperty(default=False, options={"HIDDEN"})
-
     def update_filepath(self, context):
         if self.directory == "":
             self.directory = os.path.dirname(bpy.data.filepath)
-
-        # if self.convert_gr2:
-        #     self.filename_ext = ".gr2"
-        # else:
-        #     self.filename_ext = ".dae"
 
         if self.filepath == "":
             #self.filepath = bpy.path.ensure_ext(str.replace(bpy.path.basename(bpy.data.filepath), ".blend", ""), self.filename_ext)
@@ -617,11 +602,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         name="Misc Settings",
         default=False,
         options={"HIDDEN"}
-    )
-
-    convert_gr2: BoolProperty(
-        name="Convert to GR2",
-        default=False
     )
 
     extra_data_disabled: BoolProperty(
@@ -988,15 +968,12 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             box.prop(self, "anim_optimize_precision")
 
         box = layout.box()
-        box.prop(self, "convert_gr2")
 
-        if self.convert_gr2:
-            box.prop(self.divine_settings, "delete_collada")
-            label = "Show GR2 Options" if not self.convert_gr2_options_visible else "Hide GR2 Options"
-            box.prop(self, "convert_gr2_options_visible", text=label, toggle=True)
+        label = "Show GR2 Options" if not self.convert_gr2_options_visible else "Hide GR2 Options"
+        box.prop(self, "convert_gr2_options_visible", text=label, toggle=True)
 
-            if self.convert_gr2_options_visible:
-                self.divine_settings.draw(context, box)
+        if self.convert_gr2_options_visible:
+            self.divine_settings.draw(context, box)
 
         col = layout.column(align=True)
         label = "Misc Settings" if not self.convert_gr2_options_visible else "Misc Settings"
@@ -1017,11 +994,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             print(self.log_message)
             report("{}".format(self.log_message), "WARNING")
             self.log_message = ""
-
-        if self.convert_gr2 == False:
-            self.gr2_default_enabled_ignore = True
-        elif self.gr2_default_enabled_ignore == True:
-            self.gr2_default_enabled_ignore = False
 
         update = False
 
@@ -1050,9 +1022,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         blend_path = bpy.data.filepath
         #print("Blend path: {} ".format(blend_path))
 
-        if addon_prefs.gr2_default_enabled == True and self.gr2_default_enabled_ignore == False:
-            self.convert_gr2 = True
-
         saved_preset = bpy.context.scene.get('dos2de_lastpreset', None)
 
         if saved_preset is not None:
@@ -1068,7 +1037,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         #print("Preset: \"{}\"".format(self.selected_preset))
 
         # Multiple meshes tend to need different materials for programs like Substance Painter
-        if self.selected_preset == "MODEL" and self.convert_gr2 == False:
+        if self.selected_preset == "MODEL":
             num_meshes = 0
 
             if self.use_active_layers:
@@ -1090,6 +1059,10 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
             if num_meshes > 1:
                 self.object_types = {"ARMATURE", "MESH", "MATERIAL"}
+
+        scene_props = bpy.context.scene.ls_properties
+        if scene_props.game != "unset":
+            self.divine_settings.game = scene_props.game
 
         yup_local_override = bpy.context.scene.get('dos2de_yup_local_override', None)
 
@@ -1209,8 +1182,15 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             current_operator = None
 
     def really_execute(self, context):
-        if not self.filepath:
-            raise Exception("filepath not set")
+        output_path = Path(self.properties.filepath)
+        if output_path.suffix.lower() == '.gr2':
+            temp = tempfile.NamedTemporaryFile(delete=False)
+            temp.close()
+            tempfile_path = Path(temp.name)
+            collada_path = tempfile_path
+        else:
+            tempfile_path = None
+            collada_path = output_path
 
         result = ""
         
@@ -1473,12 +1453,11 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                                 report( "[DOS2DE-Exporter] Failed to export '{}'.".format(export_filepath))
                 else:
                     single_mode = True
+
         if single_mode:
-            pathNoextension = os.path.splitext(self.filepath)[0]
-            export_filepath = bpy.path.ensure_ext(pathNoextension, self.filename_ext)
-            result = export_dae.save(self, context, copies, filepath=export_filepath, **keywords)
+            result = export_dae.save(self, context, copies, filepath=str(collada_path), **keywords)
             if result == {"FINISHED"}:
-                exported_pathways.append(export_filepath)
+                exported_pathways.append(str(collada_path))
 
         bpy.ops.object.select_all(action='DESELECT')
 
@@ -1527,10 +1506,11 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         except Exception as e:
             print("[DOS2DE-Collada] Error setting viewport mode:\n{}".format(e))
 
-        if self.convert_gr2:
+        if tempfile_path is not None:
             divine = DivineInvoker(addon_prefs, self.divine_settings)
             for collada_file in exported_pathways:
-                divine.dae_to_gr2(collada_file)
+                divine.dae_to_gr2(str(tempfile_path), str(output_path))
+            tempfile_path.unlink()
 
         report("Export completed successfully.", "INFO")
         return result
