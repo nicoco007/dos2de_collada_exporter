@@ -1083,13 +1083,12 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
     def copy_obj(self, context, obj, parent=None):
         copy = obj.copy()
+        copy.use_fake_user = False
+
         data = getattr(obj, "data", None)
         if data != None:
             copy.data = data.copy()
-        try:
-            copy.use_fake_user = False
             copy.data.use_fake_user = False
-        except: pass
         
         export_props = getattr(obj, "llexportprops", None)
         if export_props is not None:
@@ -1160,7 +1159,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             if not obj.parent or parent_not_exporting:
                 print("[DOS2DE-Exporter] Copying object '{}'.".format(obj.name))
                 copy = self.copy_obj(context, obj)
-                modifyObjects.append(copy)
+                modifyObjects.append((obj, copy))
                 copies.append(copy)
 
                 if parent_not_exporting:
@@ -1177,14 +1176,12 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                 for childobj in obj.children:
                     if self.can_modify_object(context, childobj):
                         childcopy = self.copy_obj(context, childobj, copy)
-                        modifyObjects.append(childcopy)
+                        modifyObjects.append((obj, childcopy))
                         copies.append(childcopy)
             else:
                 print("[DOS2DE-Exporter] object '{}' has a parent.".format(obj.name))
 
-        merging_enabled = hasattr(context.scene, "llexportmerge")
-        
-        for obj in modifyObjects:
+        for (orig, obj) in modifyObjects:
             if obj.type == "ARMATURE":
                 if self.use_exclude_armature_modifier:
                     self.pose_apply(context, obj)
@@ -1204,40 +1201,40 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                 export_props.prepare_name(context, obj)
             
             if self.yup_enabled == "ROTATE":
-                    if not obj.parent:
-                        print("  Rotating {} to y-up. | (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
-                                    degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
-                                )
-                        obj.rotation_euler = (obj.rotation_euler.to_matrix() * Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
-                        print("  Rotated {} to y-up. | (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
-                                    degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
-                                )
-                        
-                        self.transform_apply(context, obj, rotation=True)
+                if not obj.parent:
+                    print("  Rotating {} to y-up. | (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
+                                degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
+                            )
+                    obj.rotation_euler = (obj.rotation_euler.to_matrix() * Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
+                    print("  Rotated {} to y-up. | (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
+                                degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
+                            )
+                    
+                    self.transform_apply(context, obj, rotation=True)
 
-                        for childobj in obj.children:
-                            childobj.select_set(True)
-                            # rot_x = degrees(childobj.rotation_euler[0])
-                            # if rot_x != 0:
-                            #     parent_yup_applied = round(rot_x) == -90
-                            #     print("  Applying rotation transform to child {} | (x={})".format(childobj.name, rot_x))
-                            #     self.transform_apply(context, childobj, rotation=True)
+                    for childobj in obj.children:
+                        childobj.select_set(True)
+                        # rot_x = degrees(childobj.rotation_euler[0])
+                        # if rot_x != 0:
+                        #     parent_yup_applied = round(rot_x) == -90
+                        #     print("  Applying rotation transform to child {} | (x={})".format(childobj.name, rot_x))
+                        #     self.transform_apply(context, childobj, rotation=True)
 
-                            #     if parent_yup_applied == False:
-                            #         print("    Rotating child to y-up: (x={}, y={}, z={})".format(degrees(childobj.rotation_euler[0]),
-                            #                 degrees(childobj.rotation_euler[1]), degrees(childobj.rotation_euler[2]))
-                            #             )
-                            #         childobj.rotation_euler = (childobj.rotation_euler.to_matrix() * Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
-                            #         print("      Rotated child {} to y-up. (x={})".format(childobj.name, degrees(childobj.rotation_euler[0])))
-                            #         self.transform_apply(context, childobj, rotation=True)
+                        #     if parent_yup_applied == False:
+                        #         print("    Rotating child to y-up: (x={}, y={}, z={})".format(degrees(childobj.rotation_euler[0]),
+                        #                 degrees(childobj.rotation_euler[1]), degrees(childobj.rotation_euler[2]))
+                        #             )
+                        #         childobj.rotation_euler = (childobj.rotation_euler.to_matrix() * Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
+                        #         print("      Rotated child {} to y-up. (x={})".format(childobj.name, degrees(childobj.rotation_euler[0])))
+                        #         self.transform_apply(context, childobj, rotation=True)
 
-                        bpy.context.view_layer.objects.active = obj
-                        obj.select_set(True)
-                        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-                        bpy.ops.object.select_all(action='DESELECT')
-                        # print(" {} Final (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
-                        #             degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
-                        #         )
+                    bpy.context.view_layer.objects.active = obj
+                    obj.select_set(True)
+                    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+                    bpy.ops.object.select_all(action='DESELECT')
+                    # print(" {} Final (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
+                    #             degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
+                    #         )
             
             if self.xflip_armature and obj.type == "ARMATURE":
                 obj.scale = (-1.0, 1.0, 1.0)
@@ -1264,10 +1261,10 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
             if self.use_mesh_modifiers and obj.type == "MESH":
                 hasArmature = "ARMATURE" in self.object_types
-                if obj.modifiers and len(obj.modifiers) > 0:
+                if orig.modifiers and len(orig.modifiers) > 0:
                     old_mesh = obj.data
 
-                    armature_modifier = obj.modifiers.get("Armature")
+                    armature_modifier = orig.modifiers.get("Armature")
                     armature_poses = [arm.pose_position for arm in bpy.data.armatures]
 
                     if self.use_rest_pose:
@@ -1278,8 +1275,11 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                         obj.modifiers.remove(armature_modifier)
 
                     apply_modifiers = len(obj.modifiers) > 0 and self.use_mesh_modifiers
+                    if not apply_modifiers:
+                        obj.modifiers.clear()
 
-                    mesh = obj.to_mesh(context.scene, apply_modifiers, "RENDER")
+                    dg = bpy.context.evaluated_depsgraph_get()
+                    mesh = obj.to_mesh(preserve_all_data_layers=True, depsgraph=dg)
 
                     #Reset poses
                     if armature_poses:
@@ -1342,7 +1342,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                 if self.anim_export_all_separate:
                     print("[DOS2DE-Exporter] Exporting all actions as separate animation files.")
                     
-                    armature = next(iter(list(filter(lambda obj: obj.type == "ARMATURE", modifyObjects))), None)
+                    armature = next(iter(list(filter(lambda orig, obj: obj.type == "ARMATURE", modifyObjects))), None)
                     if armature is not None:
                         for action in bpy.data.actions:
                             export_name = "{}_Anim_{}".format(armature.name, action.name)
@@ -1366,7 +1366,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                     progress_total = len(list(i for i in range(20) if context.scene.layers[i]))
                     for i in range(20):
                         if context.scene.layers[i]:
-                            export_list = list(filter(lambda obj: obj.layers[i], modifyObjects))
+                            export_list = list(filter(lambda orig, obj: obj.layers[i], modifyObjects))
                             export_name = "{}_Layer{}".format(bpy.path.basename(bpy.context.blend_data.filepath), i)
 
                             if self.auto_name == "LAYER" and "namedlayers" in bpy.data.scenes[context.scene.name]:
@@ -1388,7 +1388,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         if single_mode:
             pathNoextension = os.path.splitext(self.filepath)[0]
             export_filepath = bpy.path.ensure_ext(pathNoextension, self.filename_ext)
-            result = export_dae.save(self, context, modifyObjects, filepath=export_filepath, **keywords)
+            result = export_dae.save(self, context, copies, filepath=export_filepath, **keywords)
             if result == {"FINISHED"}:
                 exported_pathways.append(export_filepath)
 
@@ -1615,7 +1615,7 @@ class DIVINITYEXPORTER_OT_import_collada(bpy.types.Operator, ImportHelper):
                 skeleton_id = skel.text
 
             for obj in context.scene.objects:
-                if obj.type == "ARMATURE":
+                if obj.type == "ARMATURE" and obj.select_get():
                     props = obj.data.ls_properties
                     props.skeleton_resource_id = skeleton_id
 
