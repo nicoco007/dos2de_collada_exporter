@@ -1014,6 +1014,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         return update
         
+
     def invoke(self, context, event):
         addon_prefs = get_prefs(context)
 
@@ -1071,7 +1072,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         return {'RUNNING_MODAL'}
 
-    def can_modify_object(self, context, obj):
+
+    def should_export_object(self, obj):
         if self.use_export_visible and obj.hide_get() or obj.hide_select:
             return False
         if self.use_export_selected and not obj.select_get():
@@ -1089,6 +1091,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         #print("[DOS2DE-Exporter] Obj '{}' can be exported".format(obj.name))
         return True
 
+
     def pose_apply(self, context, obj):
         last_active = getattr(bpy.context.scene.objects, "active", None)
         bpy.ops.object.select_all(action='DESELECT')
@@ -1099,6 +1102,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         obj.select_set(False)
         bpy.context.view_layer.objects.active = last_active
     
+
     def transform_apply(self, context, obj, location=False, rotation=False, scale=False):
         last_active = getattr(bpy.context.scene.objects, "active", None)
         bpy.ops.object.select_all(action='DESELECT')
@@ -1108,6 +1112,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         bpy.ops.object.transform_apply(location=location, rotation=rotation, scale=scale)
         obj.select_set(False)
         bpy.context.view_layer.objects.active = last_active
+
 
     def copy_obj(self, context, obj, parent=None):
         copy = obj.copy()
@@ -1129,7 +1134,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         print("[DOS2DE-Export] Created a copy of object/data {} ({})".format(obj.name, copy.name))
 
         if parent is not None:
-            if self.can_modify_object(context, parent):
+            if self.should_export_object(parent):
                 copy.parent = parent
                 copy.matrix_parent_inverse = obj.matrix_parent_inverse.copy()
                 if parent.type == "ARMATURE":
@@ -1144,6 +1149,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         return copy
     
+
     def validate_export_order(self, objects):
         has_order = False
         objects = {o for o in objects if o.type == "MESH"}
@@ -1161,8 +1167,10 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         return True
 
+
     def cancel(self, context):
         pass
+
 
     def execute(self, context):
         global current_operator
@@ -1171,6 +1179,193 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             return self.really_execute(context)
         finally:
             current_operator = None
+
+
+    def collect_export_objects(self, objects, selected, targets):
+        for obj in objects:
+            if obj.select_get():
+                selected.append(obj)
+                obj.select_set(False)
+            
+            if self.should_export_object(obj):
+                targets.append(obj)
+            else:
+                self.collect_export_objects(self, obj.children, selected, targets)
+
+
+    def make_copy_recursive(self, context, obj, modifyObjects, copies):
+        print("[DOS2DE-Exporter] Copying object '{}'.".format(obj.name))
+        copy = self.copy_obj(context, obj)
+        modifyObjects.append((obj, copy))
+        copies.append(copy)
+
+        if obj.parent is not None and not self.should_export_object(obj.parent):
+            msg = "[DOS2DE-Exporter] Object '{}' has a parent '{}' that will not export. Unparenting copy and preserving transform.".format(
+                copy.name, obj.parent.name)
+            report(msg)
+            bpy.ops.object.select_all(action='DESELECT')
+            bpy.context.view_layer.objects.active = copy
+            copy.select_set(True)
+            bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
+            copy.select_set(False)
+            bpy.context.view_layer.objects.active = None
+
+        for child in obj.children:
+            if self.should_export_object(child):
+                self.make_copy_recursive(context, child, modifyObjects, copies)
+
+
+    def apply_yup_transform(self, context, obj):
+        print("  Rotating {} to y-up. | (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
+                    degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
+                )
+        obj.rotation_euler = (obj.rotation_euler.to_matrix() @ Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
+        print("  Rotated {} to y-up. | (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
+                    degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
+                )
+        
+        self.transform_apply(context, obj, rotation=True)
+
+        for childobj in obj.children:
+            childobj.select_set(True)
+            # rot_x = degrees(childobj.rotation_euler[0])
+            # if rot_x != 0:
+            #     parent_yup_applied = round(rot_x) == -90
+            #     print("  Applying rotation transform to child {} | (x={})".format(childobj.name, rot_x))
+            #     self.transform_apply(context, childobj, rotation=True)
+
+            #     if parent_yup_applied == False:
+            #         print("    Rotating child to y-up: (x={}, y={}, z={})".format(degrees(childobj.rotation_euler[0]),
+            #                 degrees(childobj.rotation_euler[1]), degrees(childobj.rotation_euler[2]))
+            #             )
+            #         childobj.rotation_euler = (childobj.rotation_euler.to_matrix() @ Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
+            #         print("      Rotated child {} to y-up. (x={})".format(childobj.name, degrees(childobj.rotation_euler[0])))
+            #         self.transform_apply(context, childobj, rotation=True)
+
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+        bpy.ops.object.select_all(action='DESELECT')
+        # print(" {} Final (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
+        #             degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
+        #         )
+
+
+    def apply_xflip_transform(self, context, obj):
+        self.transform_apply(context, obj, scale=True)
+        obj.scale = (-1.0, 1.0, 1.0)
+        self.transform_apply(context, obj, scale=True)
+        #bpy.ops.object.mode_set(mode="EDIT")
+        #bpy.ops.mesh.flip_normals()
+        #bpy.ops.object.mode_set(mode="OBJECT")
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        #bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bmesh.ops.reverse_faces(bm, faces=bm.faces)
+        bm.to_mesh(obj.data)
+        bm.clear()
+        obj.data.update()
+        self.transform_apply(context, obj, scale=True)
+        print("Flipped and applied scale transformation for {} ".format(obj.name))
+
+
+    def reparent_armature(self, orig, obj):
+        hasArmature = "ARMATURE" in self.object_types
+        if orig.modifiers and len(orig.modifiers) > 0:
+            old_mesh = obj.data
+
+            armature_modifier = orig.modifiers.get("Armature")
+            armature_poses = [arm.pose_position for arm in bpy.data.armatures]
+
+            if self.use_rest_pose:
+                for arm in bpy.data.armatures:
+                    arm.pose_position = "REST"
+
+            apply_modifiers = len(obj.modifiers) > 0 and self.use_mesh_modifiers
+            if not apply_modifiers:
+                obj.modifiers.clear()
+
+            dg = bpy.context.evaluated_depsgraph_get()
+            mesh = obj.to_mesh(preserve_all_data_layers=True, depsgraph=dg).copy()
+
+            #Reset poses
+            if armature_poses:
+                for i, arm in enumerate(bpy.data.armatures):
+                    arm.pose_position = armature_poses[i]
+
+            obj.modifiers.clear()
+
+            if armature_modifier:
+                new_mod = obj.modifiers.new(armature_modifier.name, "ARMATURE")
+                new_mod.invert_vertex_group = armature_modifier.invert_vertex_group
+                new_mod.object = armature_modifier.object
+                new_mod.use_bone_envelopes = armature_modifier.use_bone_envelopes
+                new_mod.use_deform_preserve_volume = armature_modifier.use_deform_preserve_volume
+                new_mod.use_multi_modifier = armature_modifier.use_multi_modifier
+                new_mod.use_vertex_groups = armature_modifier.use_vertex_groups
+                new_mod.vertex_group = armature_modifier.vertex_group
+            
+            obj.data = mesh
+            bpy.data.meshes.remove(old_mesh)
+        
+        if not hasArmature and obj.parent is not None and obj.parent.type == "ARMATURE":
+            matrix_copy = obj.parent.matrix_world.copy()
+            obj.parent = None
+            obj.matrix_world = matrix_copy
+
+
+    def apply_all_object_transforms(self, context, orig, obj):
+        if obj.type == "ARMATURE":
+            if self.use_exclude_armature_modifier:
+                self.pose_apply(context, obj)
+            elif self.use_rest_pose:
+                d = getattr(obj, "data", None)
+                if d is not None:
+                    d.pose_position = "REST"
+
+        export_props = getattr(obj, "llexportprops", None)
+        if export_props is not None:
+            if not obj.parent:
+                print("Preparing export properties for {}".format(obj.name))
+                export_props.prepare(context, obj)
+                for childobj in obj.children:
+                    print("  Preparing export properties for child {}".format(childobj.name))
+                    childobj.llexportprops.prepare(context, childobj)
+                    childobj.llexportprops.prepare_name(context, childobj)
+            export_props.prepare_name(context, obj)
+        
+        if self.yup_enabled == "ROTATE" and obj.parent is None:
+            self.apply_yup_transform(context, obj)
+        
+        if self.xflip_armature and obj.type == "ARMATURE":
+            obj.scale = (-1.0, 1.0, 1.0)
+            self.transform_apply(context, obj, scale=True)
+            print("Flipped and applied scale transformation for {} ".format(obj.name))
+
+        if self.xflip_mesh and obj.type == "MESH":
+            self.apply_xflip_transform(context, obj)
+
+        if self.use_mesh_modifiers and obj.type == "MESH":
+            self.reparent_armature(orig, obj)
+
+        if obj.type == "MESH" and obj.vertex_groups:
+            if self.use_limit_total:
+                bpy.context.view_layer.objects.active = obj
+                obj.select_set(True)
+                bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
+                bpy.ops.object.vertex_group_limit_total(limit=4)
+                bpy.ops.object.mode_set(mode="OBJECT")
+                print("Limited total vertex influences to 4 for {}.".format(obj.name))
+                obj.select_set(False)
+            if self.use_normalize_vert_groups:
+                bpy.context.view_layer.objects.active = obj
+                obj.select_set(True)
+                bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
+                bpy.ops.object.vertex_group_normalize_all()
+                bpy.ops.object.mode_set(mode="OBJECT")
+                print("Normalized vertex groups for {}.".format(obj.name))
+                obj.select_set(False)
+    
 
     def really_execute(self, context):
         output_path = Path(self.properties.filepath)
@@ -1204,13 +1399,9 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         if activeObject is not None and not activeObject.hide_get():
             bpy.ops.object.mode_set(mode="OBJECT")
         
-        for obj in context.scene.objects:
-            if obj.select_get():
-                selectedObjects.append(obj)
-                obj.select_set(False)
-            
-            if self.can_modify_object(context, obj):
-                targetObjects.append(obj)
+        self.collect_export_objects(context.scene.objects, selectedObjects, targetObjects)
+
+        print("TARGETS: ", len(targetObjects))
 
         if not self.validate_export_order(targetObjects):
             return {"FINISHED"}
@@ -1218,174 +1409,13 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         context.scene.ls_properties.metadata_version = ColladaMetadataLoader.LSLIB_METADATA_VERSION
 
         for obj in targetObjects:
-            parent_not_exporting = (obj.parent is not None 
-                and not self.can_modify_object(context, obj.parent))
-            if not obj.parent or parent_not_exporting:
-                print("[DOS2DE-Exporter] Copying object '{}'.".format(obj.name))
-                copy = self.copy_obj(context, obj)
-                modifyObjects.append((obj, copy))
-                copies.append(copy)
-
-                if parent_not_exporting:
-                    msg = "[DOS2DE-Exporter] Object '{}' has a parent '{}' that will not export. Unparenting copy and preserving transform.".format(
-                        copy.name, obj.parent.name)
-                    report(msg)
-                    bpy.ops.object.select_all(action='DESELECT')
-                    bpy.context.view_layer.objects.active = copy
-                    copy.select_set(True)
-                    bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
-                    copy.select_set(False)
-                    bpy.context.view_layer.objects.active = None
-
-                for childobj in obj.children:
-                    if self.can_modify_object(context, childobj):
-                        childcopy = self.copy_obj(context, childobj, copy)
-                        modifyObjects.append((obj, childcopy))
-                        copies.append(childcopy)
+            if obj.parent is not None and self.should_export_object(obj.parent):
+                print("[DOS2DE-Exporter] object '{}' has a parent that will export.".format(obj.name))
             else:
-                print("[DOS2DE-Exporter] object '{}' has a parent.".format(obj.name))
+                self.make_copy_recursive(context, obj, modifyObjects, copies)
 
         for (orig, obj) in modifyObjects:
-            if obj.type == "ARMATURE":
-                if self.use_exclude_armature_modifier:
-                    self.pose_apply(context, obj)
-                elif self.use_rest_pose:
-                    d = getattr(obj, "data", None)
-                    if d is not None:
-                        d.pose_position = "REST"
-            export_props = getattr(obj, "llexportprops", None)
-            if export_props is not None:
-                if not obj.parent:
-                    print("Preparing export properties for {}".format(obj.name))
-                    export_props.prepare(context, obj)
-                    for childobj in obj.children:
-                        print("  Preparing export properties for child {}".format(childobj.name))
-                        childobj.llexportprops.prepare(context, childobj)
-                        childobj.llexportprops.prepare_name(context, childobj)
-                export_props.prepare_name(context, obj)
-            
-            if self.yup_enabled == "ROTATE":
-                if not obj.parent:
-                    print("  Rotating {} to y-up. | (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
-                                degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
-                            )
-                    obj.rotation_euler = (obj.rotation_euler.to_matrix() @ Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
-                    print("  Rotated {} to y-up. | (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
-                                degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
-                            )
-                    
-                    self.transform_apply(context, obj, rotation=True)
-
-                    for childobj in obj.children:
-                        childobj.select_set(True)
-                        # rot_x = degrees(childobj.rotation_euler[0])
-                        # if rot_x != 0:
-                        #     parent_yup_applied = round(rot_x) == -90
-                        #     print("  Applying rotation transform to child {} | (x={})".format(childobj.name, rot_x))
-                        #     self.transform_apply(context, childobj, rotation=True)
-
-                        #     if parent_yup_applied == False:
-                        #         print("    Rotating child to y-up: (x={}, y={}, z={})".format(degrees(childobj.rotation_euler[0]),
-                        #                 degrees(childobj.rotation_euler[1]), degrees(childobj.rotation_euler[2]))
-                        #             )
-                        #         childobj.rotation_euler = (childobj.rotation_euler.to_matrix() @ Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
-                        #         print("      Rotated child {} to y-up. (x={})".format(childobj.name, degrees(childobj.rotation_euler[0])))
-                        #         self.transform_apply(context, childobj, rotation=True)
-
-                    bpy.context.view_layer.objects.active = obj
-                    obj.select_set(True)
-                    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-                    bpy.ops.object.select_all(action='DESELECT')
-                    # print(" {} Final (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
-                    #             degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
-                    #         )
-            
-            if self.xflip_armature and obj.type == "ARMATURE":
-                obj.scale = (-1.0, 1.0, 1.0)
-                self.transform_apply(context, obj, scale=True)
-                print("Flipped and applied scale transformation for {} ".format(obj.name))
-
-            if self.xflip_mesh and obj.type == "MESH":
-                self.transform_apply(context, obj, scale=True)
-                obj.scale = (-1.0, 1.0, 1.0)
-                self.transform_apply(context, obj, scale=True)
-                #bpy.ops.object.mode_set(mode="EDIT")
-                #bpy.ops.mesh.flip_normals()
-                #bpy.ops.object.mode_set(mode="OBJECT")
-                bm = bmesh.new()
-                bm.from_mesh(obj.data)
-                #bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-                bmesh.ops.reverse_faces(bm, faces=bm.faces)
-                bm.to_mesh(obj.data)
-                bm.clear()
-                obj.data.update()
-                self.transform_apply(context, obj, scale=True)
-                print("Flipped and applied scale transformation for {} ".format(obj.name))
-
-            if self.use_mesh_modifiers and obj.type == "MESH":
-                hasArmature = "ARMATURE" in self.object_types
-                if orig.modifiers and len(orig.modifiers) > 0:
-                    old_mesh = obj.data
-
-                    armature_modifier = orig.modifiers.get("Armature")
-                    armature_poses = [arm.pose_position for arm in bpy.data.armatures]
-
-                    if self.use_rest_pose:
-                        for arm in bpy.data.armatures:
-                            arm.pose_position = "REST"
-
-                    if self.use_exclude_armature_modifier and armature_modifier:
-                        obj.modifiers.remove(armature_modifier)
-
-                    apply_modifiers = len(obj.modifiers) > 0 and self.use_mesh_modifiers
-                    if not apply_modifiers:
-                        obj.modifiers.clear()
-
-                    dg = bpy.context.evaluated_depsgraph_get()
-                    mesh = obj.to_mesh(preserve_all_data_layers=True, depsgraph=dg)
-
-                    #Reset poses
-                    if armature_poses:
-                        for i, arm in enumerate(bpy.data.armatures):
-                            arm.pose_position = armature_poses[i]
-
-                    obj.modifiers.clear()
-
-                    if armature_modifier:
-                        new_mod = obj.modifiers.new(armature_modifier.name, "ARMATURE")
-                        new_mod.invert_vertex_group = armature_modifier.invert_vertex_group
-                        new_mod.object = armature_modifier.object
-                        new_mod.use_bone_envelopes = armature_modifier.use_bone_envelopes
-                        new_mod.use_deform_preserve_volume = armature_modifier.use_deform_preserve_volume
-                        new_mod.use_multi_modifier = armature_modifier.use_multi_modifier
-                        new_mod.use_vertex_groups = armature_modifier.use_vertex_groups
-                        new_mod.vertex_group = armature_modifier.vertex_group
-                    
-                    obj.data = mesh
-                    bpy.data.meshes.remove(old_mesh)
-                
-                if not hasArmature and obj.parent is not None and obj.parent.type == "ARMATURE":
-                    matrix_copy = obj.parent.matrix_world.copy()
-                    obj.parent = None
-                    obj.matrix_world = matrix_copy
-
-            if obj.type == "MESH" and obj.vertex_groups:
-                if self.use_limit_total:
-                    bpy.context.view_layer.objects.active = obj
-                    obj.select_set(True)
-                    bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
-                    bpy.ops.object.vertex_group_limit_total(limit=4)
-                    bpy.ops.object.mode_set(mode="OBJECT")
-                    print("Limited total vertex influences to 4 for {}.".format(obj.name))
-                    obj.select_set(False)
-                if self.use_normalize_vert_groups:
-                    bpy.context.view_layer.objects.active = obj
-                    obj.select_set(True)
-                    bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
-                    bpy.ops.object.vertex_group_normalize_all()
-                    bpy.ops.object.mode_set(mode="OBJECT")
-                    print("Normalized vertex groups for {}.".format(obj.name))
-                    obj.select_set(False)
+            self.apply_all_object_transforms(context, orig, obj)
 
         keywords = self.as_keywords(ignore=("axis_forward",
                                             "axis_up",
