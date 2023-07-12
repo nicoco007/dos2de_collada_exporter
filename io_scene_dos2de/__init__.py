@@ -1198,7 +1198,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         print("[DOS2DE-Exporter] Copying object '{}'.".format(obj.name))
         copy = self.copy_obj(context, obj)
         modifyObjects.append((obj, copy))
-        copies.append(copy)
+        copies[obj.name] = copy
 
         if obj.parent is not None and not self.should_export_object(obj.parent):
             msg = "[DOS2DE-Exporter] Object '{}' has a parent '{}' that will not export. Unparenting copy and preserving transform.".format(
@@ -1270,7 +1270,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         print("Flipped and applied scale transformation for {} ".format(obj.name))
 
 
-    def reparent_armature(self, orig, obj):
+    def reparent_armature(self, copies, orig, obj):
         hasArmature = "ARMATURE" in self.object_types
         if orig.modifiers and len(orig.modifiers) > 0:
             old_mesh = obj.data
@@ -1309,13 +1309,16 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             obj.data = mesh
             bpy.data.meshes.remove(old_mesh)
         
-        if not hasArmature and obj.parent is not None and obj.parent.type == "ARMATURE":
-            matrix_copy = obj.parent.matrix_world.copy()
-            obj.parent = None
-            obj.matrix_world = matrix_copy
+        if obj.parent is not None and obj.parent.type == "ARMATURE":
+            if not hasArmature:
+                matrix_copy = obj.parent.matrix_world.copy()
+                obj.parent = None
+                obj.matrix_world = matrix_copy
+            else:
+                obj.parent = copies[obj.parent.name]
 
 
-    def apply_all_object_transforms(self, context, orig, obj):
+    def apply_all_object_transforms(self, context, copies, orig, obj):
         if obj.type == "ARMATURE":
             if self.use_exclude_armature_modifier:
                 self.pose_apply(context, obj)
@@ -1347,7 +1350,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             self.apply_xflip_transform(context, obj)
 
         if self.use_mesh_modifiers and obj.type == "MESH":
-            self.reparent_armature(orig, obj)
+            self.reparent_armature(copies, orig, obj)
 
         if obj.type == "MESH" and obj.vertex_groups:
             if self.use_limit_total:
@@ -1395,14 +1398,12 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         targetObjects = []
         modifyObjects = []
         selectedObjects = []
-        copies = []
+        copies = {}
 
         if activeObject is not None and not activeObject.hide_get():
             bpy.ops.object.mode_set(mode="OBJECT")
         
         self.collect_export_objects(context.scene.objects, selectedObjects, targetObjects)
-
-        print("TARGETS: ", len(targetObjects))
 
         if not self.validate_export_order(targetObjects):
             return {"FINISHED"}
@@ -1416,7 +1417,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                 self.make_copy_recursive(context, obj, modifyObjects, copies)
 
         for (orig, obj) in modifyObjects:
-            self.apply_all_object_transforms(context, orig, obj)
+            self.apply_all_object_transforms(context, copies, orig, obj)
 
         keywords = self.as_keywords(ignore=("axis_forward",
                                             "axis_up",
@@ -1478,13 +1479,13 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                     single_mode = True
 
         if single_mode:
-            result = export_dae.save(self, context, copies, filepath=str(collada_path), **keywords)
+            result = export_dae.save(self, context, copies.values(), filepath=str(collada_path), **keywords)
             if result == {"FINISHED"}:
                 exported_pathways.append(str(collada_path))
 
         bpy.ops.object.select_all(action='DESELECT')
 
-        for obj in copies:
+        for obj in copies.values():
             if obj is not None:
                 obj.select_set(True)
 
