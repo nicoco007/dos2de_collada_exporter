@@ -628,11 +628,9 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         items=(
                ("ARMATURE", "Armature", ""),
                ("MESH", "Mesh", ""),
-               ("MATERIAL", "Material", "Export the material for each mesh"),
                ("CURVE", "Curve", ""),
-               ("EMPTY", "Empty", ""),
         ),
-        default={"ARMATURE", "MESH", "MATERIAL", "EMPTY", "MESH", "CURVE"}
+        default={"ARMATURE", "MESH", "CURVE"}
     )
 
     use_export_selected: BoolProperty(
