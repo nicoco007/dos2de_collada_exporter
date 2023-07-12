@@ -1034,30 +1034,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                 self.debug_mode = getattr(helper_preferences, "debug_mode", False)
         #print("Preset: \"{}\"".format(self.selected_preset))
 
-        # Multiple meshes tend to need different materials for programs like Substance Painter
-        if self.selected_preset == "MODEL":
-            num_meshes = 0
-
-            if self.use_active_layers:
-                for i in range(20):
-                    if context.scene.layers[i]:
-                        for obj in context.scene.objects:
-                            if obj.layers[i] and obj.type == "MESH":
-                                num_meshes += 1
-            elif self.use_export_selected:
-                for obj in context.scene.objects:
-                    if obj.select_get() and obj.type == "MESH":
-                        num_meshes += 1
-            else:
-                for obj in context.scene.objects:
-                    if obj.type == "MESH":
-                        num_meshes += 1
-            
-            print("Total Meshes: \"{}\"".format(num_meshes))
-
-            if num_meshes > 1:
-                self.object_types = {"ARMATURE", "MESH", "MATERIAL"}
-
         scene_props = bpy.context.scene.ls_properties
         if scene_props.game != "unset":
             self.divine_settings.game = scene_props.game
