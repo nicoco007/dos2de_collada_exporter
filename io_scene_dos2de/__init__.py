@@ -1638,7 +1638,7 @@ class ColladaMetadataLoader:
         return None
     
     def load_mesh_profile(self, geom, settings):
-        mesh = bpy.data.meshes[geom.attrib['name']]
+        mesh = bpy.data.objects[geom.attrib['name']].data
         props = mesh.ls_properties
         for ele in list(settings):
             if ele.tag == 'DivModelType':
