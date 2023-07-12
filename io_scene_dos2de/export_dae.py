@@ -27,6 +27,7 @@ http://www.khronos.org/collada/
 import os
 import time
 import math
+import re
 import shutil
 import bpy
 import bmesh
@@ -101,7 +102,10 @@ class DaeExporter:
     def validate_id(self, d):
         if (d.find("id-") == 0):
             return "z{}".format(d)
-        return d
+        return self.make_name(d)
+
+    def make_name(self, d):
+        return re.sub("\\.0[0-9][0-9]$", "", d)
 
     def new_id(self, t):
         self.last_id += 1
@@ -220,9 +224,9 @@ class DaeExporter:
                 evaluated_node.data = v
                 evaluated_node.data.update()
                 if (armature and k == 0):                   
-                    md = self.export_mesh(evaluated_node, armature, k, mid, shape.name)
+                    md = self.export_mesh(evaluated_node, armature, k, mid, self.make_name(shape.name))
                 else:                   
-                    md = self.export_mesh(evaluated_node, None, k, None, shape.name)
+                    md = self.export_mesh(evaluated_node, None, k, None, self.make_name(shape.name))
 
                 node.data = p
                 node.data.update()
@@ -326,7 +330,6 @@ class DaeExporter:
         if(self.config["use_exclude_armature_modifier"]):
             armature_modifiers = [i for i in node.modifiers if i.type == "ARMATURE"]
             if len(armature_modifiers) > 0:
-                print(node.name)            
                 armature_modifier = armature_modifiers[0]#node.modifiers.get("Armature")
 
         # Set armature in rest pose
@@ -342,7 +345,7 @@ class DaeExporter:
         apply_modifiers = len(node.modifiers) and self.config[
             "use_mesh_modifiers"]
 
-        name_to_use = mesh.name
+        name_to_use = self.make_name(mesh.name)
         if (custom_name is not None and custom_name != ""):
             name_to_use = custom_name
 
@@ -1001,7 +1004,7 @@ class DaeExporter:
 
         self.writel(
             S_GEOM, 1, "<geometry id=\"{}\" name=\"{}\">".format(
-                splineid, curve.name))
+                splineid, self.make_name(curve.name)))
         self.writel(S_GEOM, 2, "<spline closed=\"{}\">".format(
                 "true" if curve.splines and curve.splines[0].use_cyclic_u else "false"))
 
@@ -1173,7 +1176,7 @@ class DaeExporter:
             curveid))
         self.writel(S_NODES, il, "</instance_geometry>")
 
-    def export_node(self, node, il):        
+    def export_node(self, node, il):
         if (node not in self.valid_nodes):
             return
 
@@ -1182,7 +1185,7 @@ class DaeExporter:
 
         self.writel(
             S_NODES, il, "<node id=\"{}\" name=\"{}\" type=\"NODE\">".format(
-                self.validate_id(node.name), node.name))
+                self.validate_id(node.name), self.make_name(node.name)))
         il += 1
 
         self.writel(
@@ -1216,9 +1219,6 @@ class DaeExporter:
                     
             if (not valid):
                 return False
-
-        if (self.config["use_export_selected"] and not node.select_get()):
-            return False
 
         return True
 
@@ -1559,7 +1559,7 @@ class DaeExporter:
                 end = x.frame_range[1] * framelen
                 self.writel(
                     S_ANIM_CLIPS, 1, "<animation_clip name=\"{}\" "
-                    "start=\"{}\" end=\"{}\">".format(x.name, start, end))
+                    "start=\"{}\" end=\"{}\">".format(self.make_name(x.name), start, end))
                 for z in tcn:
                     self.writel(S_ANIM_CLIPS, 2,
                                 "<instance_animation url=\"#{}\"/>".format(z))
