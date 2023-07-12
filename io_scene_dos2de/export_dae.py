@@ -731,9 +731,15 @@ class DaeExporter:
             else:
                 self.writel(S_SKIN, 2, "<skin source=\"#{}\">".format(meshid))
 
-            self.writel(
-                S_SKIN, 3, "<bind_shape_matrix>{}</bind_shape_matrix>".format(
-                    strmtx(node.matrix_world)))
+            if node.parent is not None and armature.name == node.parent.name:
+                self.writel(
+                    S_SKIN, 3, "<bind_shape_matrix>{}</bind_shape_matrix>".format(
+                        strmtx(node.matrix_local)))
+            else:
+                self.writel(
+                    S_SKIN, 3, "<bind_shape_matrix>{}</bind_shape_matrix>".format(
+                        strmtx(node.matrix_world)))
+                
             # Joint Names
             self.writel(S_SKIN, 3, "<source id=\"{}-joints\">".format(contid))
             name_values = ""
