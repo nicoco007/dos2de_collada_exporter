@@ -47,6 +47,8 @@ S_LAMPS = 9
 S_ANIM_CLIPS = 10
 S_NODES = 11
 S_ANIM = 12
+S_SCENE = 13
+S_EXTRA = 14
 
 CMP_EPSILON = 0.0001
 
@@ -1612,6 +1614,24 @@ class DaeExporter:
         if (self.config["use_anim"]):
             self.export_animations()
 
+        # LSLib model type / extra data
+        if self.config["extra_data_disabled"] == False:
+            self.writel(S_EXTRA, 0, "<extra>")
+            self.writel(S_EXTRA, 1, "<technique profile=\"LSTools\">")
+            
+            ls_props = self.scene.ls_properties
+
+            if ls_props.metadata_version != 0:
+                self.writel(S_EXTRA, 2, "<MetadataVersion>" + str(ls_props.metadata_version) + "</MetadataVersion>")
+
+            self.writel(S_EXTRA, 1, "</technique>")
+            self.writel(S_EXTRA, 0, "</extra>")
+
+        self.writel(S_SCENE, 0, "<scene>")
+        self.writel(S_SCENE, 1, "<instance_visual_scene url=\"#{}\" />".format(
+                self.scene_name))
+        self.writel(S_SCENE, 0, "</scene>")
+
         try:
             f = open(self.path, "wb")
         except:
@@ -1629,12 +1649,6 @@ class DaeExporter:
         for x in s:
             for l in self.sections[x]:
                 f.write(bytes(l + "\n", "UTF-8"))
-
-        f.write(bytes("<scene>\n", "UTF-8"))
-        f.write(bytes(
-            "\t<instance_visual_scene url=\"#{}\" />\n".format(
-                self.scene_name), "UTF-8"))
-        f.write(bytes("</scene>\n", "UTF-8"))
         f.write(bytes("</COLLADA>\n", "UTF-8"))
         return True
 
@@ -1644,9 +1658,9 @@ class DaeExporter:
                  "armature_for_morph", "used_bones", "wrongvtx_report",
                  "skeletons", "action_constraints", "temp_meshes")
 
-    def __init__(self, path, objects, kwargs, operator):
+    def __init__(self, path, context, objects, kwargs, operator):
         self.operator = operator
-        self.scene = bpy.context.scene
+        self.scene = context.scene
         self.last_id = 0
         self.scene_name = self.new_id("scene")
         self.objects = objects
@@ -1674,8 +1688,8 @@ class DaeExporter:
             bpy.data.meshes.remove(mesh)
         """
 
-def save(operator, context, objects, filepath="", use_selection=False, **kwargs):
-    with DaeExporter(filepath, objects, kwargs, operator) as exp:
+def save(operator, context, objects, filepath="", **kwargs):
+    with DaeExporter(filepath, context, objects, kwargs, operator) as exp:
         exp.export()
 
     return {"FINISHED"}

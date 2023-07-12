@@ -1214,6 +1214,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         if not self.validate_export_order(targetObjects):
             return {"FINISHED"}
+        
+        context.scene.ls_properties.metadata_version = ColladaMetadataLoader.LSLIB_METADATA_VERSION
 
         for obj in targetObjects:
             parent_not_exporting = (obj.parent is not None 
@@ -1571,6 +1573,11 @@ class LSSceneProperties(PropertyGroup):
         items=game_versions,
         default=("bg3")
     )
+    metadata_version: IntProperty(
+        name="Metadata Version",
+        options={"HIDDEN"},
+        default=0
+    )
 
 class OBJECT_PT_LSPropertyPanel(Panel):
     bl_label = "BG3 Settings"
@@ -1622,6 +1629,7 @@ class SCENE_PT_LSPropertyPanel(Panel):
 class ColladaMetadataLoader:
     root = None
     SCHEMA = "{http://www.collada.org/2005/11/COLLADASchema}"
+    LSLIB_METADATA_VERSION = 1
 
     TAG_TO_GAME = {
         "DivinityOriginalSin": "dos",
@@ -1639,10 +1647,20 @@ class ColladaMetadataLoader:
             report("LSLib profile data not found in Collada export; make sure you're using LSLib v1.16 or later!", "ERROR")
             return
         
+        meta_version = 0
+        
         props = context.scene.ls_properties
         for ele in list(profile):
             if ele.tag == 'Game':
                 props.game = self.TAG_TO_GAME[ele.text]
+            elif ele.tag == 'MetadataVersion':
+                meta_version = int(ele.text)
+
+        if meta_version < self.LSLIB_METADATA_VERSION:
+            report("Collada file was exported with a too old LSLib version, important metadata might be missing! Please upgrade your LSLib!", "ERROR")
+
+        if meta_version > self.LSLIB_METADATA_VERSION:
+            report("The Blender exporter plugin is too old for this LSLib version, please upgrade your exporter plugin!", "ERROR")
 
 
     def find_anim_settings(self):
