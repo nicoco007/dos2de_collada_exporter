@@ -1683,9 +1683,10 @@ class ColladaMetadataLoader:
         
         props = context.scene.ls_properties
         for ele in list(profile):
-            if ele.tag == 'Game':
+            _, _, tag = ele.tag.rpartition('}')
+            if tag == 'Game':
                 props.game = self.TAG_TO_GAME[ele.text]
-            elif ele.tag == 'MetadataVersion':
+            elif tag == 'MetadataVersion':
                 meta_version = int(ele.text)
 
         if meta_version < self.LSLIB_METADATA_VERSION:
@@ -1704,10 +1705,15 @@ class ColladaMetadataLoader:
         return None
     
     def load_mesh_profile(self, geom, settings):
+        if geom.attrib['name'] not in bpy.data.objects:
+            report("Couldnt load metadata on geometry '" + geom.attrib['name'] + "' (object not found)", "ERROR")
+            return
+        
         mesh = bpy.data.objects[geom.attrib['name']].data
         props = mesh.ls_properties
         for ele in list(settings):
-            if ele.tag == 'DivModelType':
+            _, _, tag = ele.tag.rpartition('}')
+            if tag == 'DivModelType':
                 if ele.text == 'Rigid':
                     props.rigid = True
                 elif ele.text == 'Cloth':
@@ -1720,16 +1726,16 @@ class ColladaMetadataLoader:
                     props.spring = True
                 elif ele.text == 'Occluder':
                     props.occluder = True
-            elif ele.tag == 'IsImpostor' and ele.text == '1':
+            elif tag == 'IsImpostor' and ele.text == '1':
                 props.impostor = True
-            elif ele.tag == 'ExportOrder':
+            elif tag == 'ExportOrder':
                 props.export_order = int(ele.text) + 1
-            elif ele.tag == 'LOD':
+            elif tag == 'LOD':
                 props.lod = int(ele.text)
-            elif ele.tag == 'LODDistance':
+            elif tag == 'LODDistance':
                 props.lod_distance = float(ele.text)
             else:
-                report("Unrecognized attribute in mesh profile: " + ele.tag)
+                report("Unrecognized attribute in mesh profile: " + tag)
     
     def load_mesh_profiles(self):
         for geom in self.root.findall(f"./{self.SCHEMA}library_geometries/{self.SCHEMA}geometry"):
