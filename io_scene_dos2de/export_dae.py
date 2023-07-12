@@ -699,6 +699,9 @@ class DaeExporter:
             if ls_props.impostor:
                 self.writel(S_GEOM, 5, "<IsImpostor>1</IsImpostor>")
 
+            if ls_props.export_order != 0:
+                self.writel(S_GEOM, 5, "<ExportOrder>" + str(ls_props.export_order - 1) + "</ExportOrder>")
+
             if ls_props.lod != 0:
                 self.writel(S_GEOM, 5, "<LOD>" + str(ls_props.lod) + "</LOD>")
 

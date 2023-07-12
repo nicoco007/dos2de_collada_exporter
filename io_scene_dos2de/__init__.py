@@ -1548,14 +1548,22 @@ class LSMeshProperties(PropertyGroup):
         name="Impostor",
         default = False
         )
+    export_order: IntProperty(
+        name="Export Order",
+        min = 0,
+        max = 100,
+        default = 0
+        )
     lod: IntProperty(
         name="LOD Level",
+        description="Lower LOD value = more detailed mesh",
         min = 0,
         max = 10,
         default = 0
         )
     lod_distance: FloatProperty(
         name="LOD Distance",
+        description="Distance (in meters) after which the next LOD level is displayed",
         min = 0.0,
         default = 0.0
         )
@@ -1600,6 +1608,7 @@ class OBJECT_PT_LSPropertyPanel(Panel):
 
             layout.prop(props, "lod")
             layout.prop(props, "lod_distance")
+            layout.prop(props, "export_order")
         elif context.active_object.type == "ARMATURE":
             props = context.active_object.data.ls_properties
             layout.prop(props, "skeleton_resource_id")
@@ -1673,10 +1682,14 @@ class ColladaMetadataLoader:
                     props.occluder = True
             elif ele.tag == 'IsImpostor' and ele.text == '1':
                 props.impostor = True
+            elif ele.tag == 'ExportOrder':
+                props.export_order = int(ele.text) - 1
             elif ele.tag == 'LOD':
                 props.lod = int(ele.text)
             elif ele.tag == 'LODDistance':
                 props.lod_distance = float(ele.text)
+            else:
+                report("Unrecognized attribute in mesh profile: " + ele.tag)
     
     def load_mesh_profiles(self):
         for geom in self.root.findall(f"./{self.SCHEMA}library_geometries/{self.SCHEMA}geometry"):
