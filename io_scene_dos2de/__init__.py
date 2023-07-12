@@ -1299,7 +1299,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                 obj.data.update()
                 self.transform_apply(context, obj, scale=True)
                 print("Flipped and applied scale transformation for {} ".format(obj.name))
-                #return {"FINISHED"}
 
             if self.use_mesh_modifiers and obj.type == "MESH":
                 hasArmature = "ARMATURE" in self.object_types
@@ -1400,7 +1399,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                                 exported_pathways.append(export_filepath)
                             else:
                                 report("[DOS2DE-Exporter] Failed to export '{}'.".format(export_filepath))
-                    result = {"FINISHED"}
                 else:
                     single_mode = True
             else:
@@ -1421,9 +1419,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
                             if export_dae.save(self, context, export_list, filepath=export_filepath, **keywords) == {"FINISHED"}:
                                 exported_pathways.append(export_filepath)
-                                result = {"FINISHED"}
                             else:
-                                result = {"ERROR"}
                                 report( "[DOS2DE-Exporter] Failed to export '{}'.".format(export_filepath))
                 else:
                     single_mode = True
@@ -1487,7 +1483,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             tempfile_path.unlink()
 
         report("Export completed successfully.", "INFO")
-        return result
+        return {"FINISHED"}
 
 addon_keymaps = []
 
