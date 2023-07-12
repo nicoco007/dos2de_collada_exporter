@@ -1183,14 +1183,15 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
     def collect_export_objects(self, objects, selected, targets):
         for obj in objects:
+            should_export = self.should_export_object(obj)
             if obj.select_get():
                 selected.append(obj)
                 obj.select_set(False)
             
-            if self.should_export_object(obj):
+            if should_export:
                 targets.append(obj)
             else:
-                self.collect_export_objects(self, obj.children, selected, targets)
+                self.collect_export_objects(obj.children, selected, targets)
 
 
     def make_copy_recursive(self, context, obj, modifyObjects, copies):
