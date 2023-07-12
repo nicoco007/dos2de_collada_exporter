@@ -1247,7 +1247,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                     print("  Rotating {} to y-up. | (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
                                 degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
                             )
-                    obj.rotation_euler = (obj.rotation_euler.to_matrix() * Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
+                    obj.rotation_euler = (obj.rotation_euler.to_matrix() @ Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
                     print("  Rotated {} to y-up. | (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
                                 degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
                             )
@@ -1266,7 +1266,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                         #         print("    Rotating child to y-up: (x={}, y={}, z={})".format(degrees(childobj.rotation_euler[0]),
                         #                 degrees(childobj.rotation_euler[1]), degrees(childobj.rotation_euler[2]))
                         #             )
-                        #         childobj.rotation_euler = (childobj.rotation_euler.to_matrix() * Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
+                        #         childobj.rotation_euler = (childobj.rotation_euler.to_matrix() @ Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
                         #         print("      Rotated child {} to y-up. (x={})".format(childobj.name, degrees(childobj.rotation_euler[0])))
                         #         self.transform_apply(context, childobj, rotation=True)
 
