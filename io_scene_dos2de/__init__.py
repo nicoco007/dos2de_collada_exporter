@@ -1143,6 +1143,23 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                      copy.name, parent.name))
 
         return copy
+    
+    def validate_export_order(self, objects):
+        has_order = False
+        objects = {o for o in objects if o.type == "MESH"}
+        for object in objects:
+            if object.data.ls_properties.export_order != 0:
+                has_order = True
+
+        if has_order:
+            objects = sorted(objects, key=lambda o: o.data.ls_properties.export_order)
+            for i in range(1,len(objects)):
+                if objects[i-1].data.ls_properties.export_order != i:
+                    report("Export order issue at or near object " + objects[i-1].name, "ERROR");
+                    report("Make sure that your export orders are consecutive (1, 2, ...) and there are no gaps in export order numbers", "ERROR");
+                    return False
+
+        return True
 
     def cancel(self, context):
         pass
@@ -1194,6 +1211,9 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             
             if self.can_modify_object(context, obj):
                 targetObjects.append(obj)
+
+        if not self.validate_export_order(targetObjects):
+            return {"FINISHED"}
 
         for obj in targetObjects:
             parent_not_exporting = (obj.parent is not None 
@@ -1653,7 +1673,7 @@ class ColladaMetadataLoader:
             elif ele.tag == 'IsImpostor' and ele.text == '1':
                 props.impostor = True
             elif ele.tag == 'ExportOrder':
-                props.export_order = int(ele.text) - 1
+                props.export_order = int(ele.text) + 1
             elif ele.tag == 'LOD':
                 props.lod = int(ele.text)
             elif ele.tag == 'LODDistance':
