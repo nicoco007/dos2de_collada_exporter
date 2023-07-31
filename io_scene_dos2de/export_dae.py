@@ -171,157 +171,11 @@ class DaeExporter:
                 sections[k] = v
         self.sections = sections
 
-    def export_mesh(self, node, armature=None, skeyindex=-1, skel_source=None,
-                    custom_name=None):
+    def export_mesh(self, node, armature=None, skel_source=None, custom_name=None):
         mesh = node.data
         
         if (node.data in self.mesh_cache):
             return self.mesh_cache[mesh]
-
-        if (skeyindex == -1 and mesh.shape_keys is not None and len(
-                mesh.shape_keys.key_blocks) and self.config["use_shape_key_export"]):
-            values = []
-            morph_targets = []
-            md = None
-            for k in range(0, len(mesh.shape_keys.key_blocks)):
-                shape = node.data.shape_keys.key_blocks[k]
-                values += [shape.value]
-                shape.value = 0
-
-            mid = self.new_id("morph")
-
-            for k in range(0, len(mesh.shape_keys.key_blocks)):
-                shape = node.data.shape_keys.key_blocks[k]
-                node.show_only_shape_key = True
-                node.active_shape_key_index = k
-                shape.value = 1.0
-                mesh.update()
-                p = node.data
-                
-                armature_modifier = None            
-                armature_modifier_state = None
-                
-                if(self.config["use_exclude_armature_modifier"]):
-                    armature_modifiers = [i for i in node.modifiers if i.type == "ARMATURE"]
-                    armature_modifier = armature_modifiers[0]#node.modifiers.get("Armature")
-
-                if(armature_modifier):  
-                    # the armature modifier must be disabled too
-                    armature_modifier_state = armature_modifier.show_viewport
-                    armature_modifier.show_viewport = False         
-                
-                print(node)
-                v = node.to_mesh(preserve_all_data_layers=True, depsgraph=bpy.context.evaluated_depsgraph_get()) 
-                print(v)
-                # Warning, Blender 2.8 does not support anymore the "RENDER" argument to apply modifier
-                # with render state only...
-                
-                armature_modifier.show_viewport = armature_modifier_state
-                
-                self.temp_meshes.add(v)
-                deps = bpy.context.evaluated_depsgraph_get()
-                evaluated_node = node.evaluated_get(deps)
-                evaluated_node.data = v
-                evaluated_node.data.update()
-                if (armature and k == 0):                   
-                    md = self.export_mesh(evaluated_node, armature, k, mid, self.make_name(shape.name))
-                else:                   
-                    md = self.export_mesh(evaluated_node, None, k, None, self.make_name(shape.name))
-
-                node.data = p
-                node.data.update()
-                shape.value = 0.0
-                morph_targets.append(md)
-
-            node.show_only_shape_key = False
-            node.active_shape_key_index = 0
-
-            self.writel(
-                S_MORPH, 1, "<controller id=\"{}\" name=\"\">".format(mid))
-            self.writel(
-                S_MORPH, 2,
-                "<morph source=\"#{}\" method=\"NORMALIZED\">".format(
-                    morph_targets[0]["id"]))
-
-            self.writel(
-                S_MORPH, 3, "<source id=\"{}-morph-targets\">".format(mid))
-            self.writel(
-                S_MORPH, 4,
-                "<IDREF_array id=\"{}-morph-targets-array\" "
-                "count=\"{}\">".format(mid, len(morph_targets) - 1))
-            marr = ""
-            warr = ""
-            for i in range(len(morph_targets)):
-                if (i == 0):
-                    continue
-                elif (i > 1):
-                    marr += " "
-
-                if ("skin_id" in morph_targets[i]):
-                    marr += morph_targets[i]["skin_id"]
-                else:
-                    marr += morph_targets[i]["id"]
-
-                warr += " 0"
-
-            self.writel(S_MORPH, 5, marr)
-            self.writel(S_MORPH, 4, "</IDREF_array>")
-            self.writel(S_MORPH, 4, "<technique_common>")
-            self.writel(
-                S_MORPH, 5, "<accessor source=\"#{}-morph-targets-array\" "
-                "count=\"{}\" stride=\"1\">".format(
-                    mid, len(morph_targets) - 1))
-            self.writel(
-                S_MORPH, 6, "<param name=\"MORPH_TARGET\" type=\"IDREF\"/>")
-            self.writel(S_MORPH, 5, "</accessor>")
-            self.writel(S_MORPH, 4, "</technique_common>")
-            self.writel(S_MORPH, 3, "</source>")
-
-            self.writel(
-                S_MORPH, 3, "<source id=\"{}-morph-weights\">".format(mid))
-            self.writel(
-                S_MORPH, 4,
-                "<float_array id=\"{}-morph-weights-array\" count=\"{}\" >"
-                .format(mid, len(morph_targets) - 1))
-            self.writel(S_MORPH, 5, warr)
-            self.writel(S_MORPH, 4, "</float_array>")
-            self.writel(S_MORPH, 4, "<technique_common>")
-            self.writel(
-                S_MORPH, 5,
-                "<accessor source=\"#{}-morph-weights-array\" "
-                "count=\"{}\" stride=\"1\">".format(
-                    mid, len(morph_targets) - 1))
-            self.writel(
-                S_MORPH, 6, "<param name=\"MORPH_WEIGHT\" type=\"float\"/>")
-            self.writel(S_MORPH, 5, "</accessor>")
-            self.writel(S_MORPH, 4, "</technique_common>")
-            self.writel(S_MORPH, 3, "</source>")
-
-            self.writel(S_MORPH, 3, "<targets>")
-            self.writel(
-                S_MORPH, 4, "<input semantic=\"MORPH_TARGET\" "
-                "source=\"#{}-morph-targets\"/>".format(mid))
-            self.writel(
-                S_MORPH, 4, "<input semantic=\"MORPH_WEIGHT\" "
-                "source=\"#{}-morph-weights\"/>".format(mid))
-            self.writel(S_MORPH, 3, "</targets>")
-            self.writel(S_MORPH, 2, "</morph>")
-            self.writel(S_MORPH, 1, "</controller>")
-            if armature is not None:
-
-                self.armature_for_morph[node] = armature
-
-            meshdata = {}
-            if (armature):
-                meshdata = morph_targets[0]
-                meshdata["morph_id"] = mid
-            else:
-                meshdata["id"] = morph_targets[0]["id"]
-                meshdata["morph_id"] = mid
-
-            self.mesh_cache[node.data] = meshdata
-            return meshdata
-
 
         armature_modifier = None
         armature_poses = None
@@ -342,9 +196,6 @@ class DaeExporter:
             for arm in bpy.data.armatures:
                 arm.pose_position = "REST"
 
-        apply_modifiers = len(node.modifiers) and self.config[
-            "use_mesh_modifiers"]
-
         name_to_use = self.make_name(mesh.name)
         if (custom_name is not None and custom_name != ""):
             name_to_use = custom_name
@@ -358,8 +209,6 @@ class DaeExporter:
             armature_modifier.show_viewport = armature_modifier_state           
             for i,arm in enumerate(bpy.data.armatures):
                 arm.pose_position = armature_poses[i]
-                
-
 
         self.temp_meshes.add(mesh)
         triangulate = self.config["use_triangles"]
@@ -462,7 +311,7 @@ class DaeExporter:
                 tup = v.get_tup()
                 idx = 0
                 # Do not optmize if using shapekeys
-                if (skeyindex == -1 and tup in vertex_map):
+                if tup in vertex_map:
                     idx = vertex_map[tup]
                 else:
                     idx = len(vertices)
@@ -721,12 +570,10 @@ class DaeExporter:
 
         meshdata = {}
         meshdata["id"] = meshid
-        if (skeyindex == -1):
-            self.mesh_cache[node.data] = meshdata
+        self.mesh_cache[node.data] = meshdata
 
         # Export armature data (if armature exists)
-        if (armature is not None and (
-                skel_source is not None or skeyindex == -1)):
+        if armature is not None:
             contid = self.new_id("controller")
 
             self.writel(S_SKIN, 1, "<controller id=\"{}\">".format(contid))
@@ -875,19 +722,6 @@ class DaeExporter:
                 {"WARNING"},
                 "Object \"{}\" has armature modifier, but is not a child of "
                 "an armature. This is unsupported.".format(node.name))
-
-        if (node.data.shape_keys is not None):
-            sk = node.data.shape_keys
-            if (sk.animation_data):
-                for d in sk.animation_data.drivers:
-                    if (d.driver):
-                        for v in d.driver.variables:
-                            for t in v.targets:
-                                if (t.id is not None and
-                                        t.id.name in self.scene.objects):
-                                    self.armature_for_morph[
-                                        node] = self.scene.objects[t.id.name]
-        
     
         meshdata = self.export_mesh(node, armature)
         close_controller = False
@@ -1387,7 +1221,6 @@ class DaeExporter:
 
         tcn = []
         xform_cache = {}
-        blend_cache = {}
 
         # Change frames first, export objects last, boosts performance
         for t in range(start, end + 1):
@@ -1398,29 +1231,8 @@ class DaeExporter:
                 if (node not in self.valid_nodes):
                     continue
                 if (allowed is not None and not (node in allowed)):
-                    if (node.type == "MESH" and node.data is not None and
-                        (node in self.armature_for_morph) and (
-                            self.armature_for_morph[node] in allowed)):
-                        pass
-                    else:
-                        continue
-                if (node.type == "MESH" and node.data is not None and
-                    node.data.shape_keys is not None and (
-                        node.data in self.mesh_cache) and len(
-                            node.data.shape_keys.key_blocks) and self.config["use_shape_key_export"]):
-                    target = self.mesh_cache[node.data]["morph_id"]
-                    for i in range(len(node.data.shape_keys.key_blocks)):
-
-                        if (i == 0):
-                            continue
-
-                        name = "{}-morph-weights({})".format(target, i - 1)
-                        if (not (name in blend_cache)):
-                            blend_cache[name] = []
-
-                        blend_cache[name].append(
-                            (key, node.data.shape_keys.key_blocks[i].value))
-
+                    continue
+                    
                 if (node.type == "MESH" and node.parent and
                         node.parent.type == "ARMATURE"):
                     # In Collada, nodes that have skin modifier must not export
@@ -1492,9 +1304,6 @@ class DaeExporter:
         for nid in xform_cache:
             tcn += self.export_animation_transform_channel(
                 nid, xform_cache[nid], True)
-        for nid in blend_cache:
-            tcn += self.export_animation_transform_channel(
-                nid, blend_cache[nid], False)
 
         return tcn
 
@@ -1522,9 +1331,6 @@ class DaeExporter:
             for x in bpy.data.actions[:]:
                 
                 if x.users == 0 or x in self.action_constraints:
-                    continue
-                if (self.config["use_anim_skip_noexp"] and
-                        x.name.endswith("-noexp")):
                     continue
                            
                 bones = []
@@ -1655,7 +1461,7 @@ class DaeExporter:
     __slots__ = ("operator", "scene", "last_id", "scene_name", "objects", "sections",
                  "path", "mesh_cache", "curve_cache",
                  "skeleton_info", "config", "valid_nodes",
-                 "armature_for_morph", "used_bones", "wrongvtx_report",
+                 "used_bones", "wrongvtx_report",
                  "skeletons", "action_constraints", "temp_meshes")
 
     def __init__(self, path, context, objects, kwargs, operator):
@@ -1672,7 +1478,6 @@ class DaeExporter:
         self.skeleton_info = {}
         self.config = kwargs
         self.valid_nodes = []
-        self.armature_for_morph = {}
         self.used_bones = []
         self.wrongvtx_report = False
         self.skeletons = []

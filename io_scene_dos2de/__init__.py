@@ -70,11 +70,16 @@ game_versions = (
 )
 
 current_operator = None
+IS_TRACING = True
 
 def report(msg, reportType="WARNING"):
     if current_operator is not None:
         current_operator.report(set((reportType, )), msg)
     print("{} ({})".format(msg, reportType))
+
+def trace(msg):
+    if IS_TRACING:
+        print(msg)
 
 def get_prefs(context):
     return context.preferences.addons["io_scene_dos2de"].preferences
@@ -251,10 +256,6 @@ class Divine_ExportSettings(PropertyGroup):
         name="X-Flip Skeletons",
         default=False
     )
-    xflip_meshes: BoolProperty(
-        name="X-Flip Meshes",
-        default=False
-    )
 
     flip_uvs: BoolProperty(
         name="Flip UVs",
@@ -315,7 +316,6 @@ class Divine_ExportSettings(PropertyGroup):
 
     drawable_props = [
         "xflip_skeletons",
-        "xflip_meshes",
         "flip_uvs",
         "filter_uvs",
         "ignore_uv_nan",
@@ -368,7 +368,6 @@ class DivineInvoker:
 
         divine_args = {
             "xflip_skeletons"           : "x-flip-skeletons",
-            "xflip_meshes"              : "x-flip-meshes",
             "export_normals"            : "export-normals",
             "export_tangents"           : "export-tangents",
             "export_uvs"                : "export-uvs",
@@ -521,10 +520,11 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
     def update_filepath(self, context):
         if self.directory == "":
             self.directory = os.path.dirname(bpy.data.filepath)
+            trace(f"Set default dir: {self.directory}")
 
         if self.filepath == "":
-            #self.filepath = bpy.path.ensure_ext(str.replace(bpy.path.basename(bpy.data.filepath), ".blend", ""), self.filename_ext)
             self.filepath = bpy.path.ensure_ext("{}\\{}".format(self.directory, str.replace(bpy.path.basename(bpy.data.filepath), ".blend", "")), self.filename_ext)
+            trace(f"Set default path: {self.filepath}")
 
         if self.filepath != "" and self.last_filepath == "":
             self.last_filepath = self.filepath
@@ -652,16 +652,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         ("ACTION", "Flag", "Flag the object as being y-up without rotating it")
     )
 
-    xflip_armature: BoolProperty(
-        name="X-Flip Armature",
-        description="Flips the armature on the x-axis",
-        default=False
-        )
-    xflip_mesh: BoolProperty(
-        name="X-Flip Mesh",
-        description="Flips meshes on the x-axis (DOS2/granny x-flips everything for some reason)",
-        default=False
-        )
     auto_name: EnumProperty(
         name="Auto-Name",
         description="Auto-generate a filename based on a property name",
@@ -685,11 +675,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
     use_normalize_vert_groups: BoolProperty(
         name="Normalize Vertex Groups",
         description="Normalize all vertex groups",
-        default=True
-        )
-    use_limit_total: BoolProperty(
-        name="Limit Total",
-        description="Limit total vertex influences to 4 (GR2 requirement)",
         default=True
         )
     use_rest_pose: BoolProperty(
@@ -724,40 +709,9 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         description="Export keyframe animation",
         default=False
         )
-    anim_export_all_separate: BoolProperty(
-        name="Export All Actions",
-        description="Export all actions as separate animation files",
-        default=False
-        )
     use_anim_action_all = BoolProperty(name="All Actions",
         description=("Export all actions for the first armature found in separate DAE files"),
         default=False
-        )
-    use_anim_skip_noexp: BoolProperty(
-        name="Skip (-noexp) Actions",
-        description="Skip exporting of actions whose name end in (-noexp)"
-                    " Useful to skip control animations",
-        default=False
-        )
-    use_anim_optimize: BoolProperty(
-        name="Optimize Keyframes",
-        description="Remove double keyframes",
-        default=False
-        )
-
-    use_shape_key_export: BoolProperty(
-        name="Export Shape Keys",
-        description="Export shape keys for selected objects",
-        default=False
-        )
-        
-    anim_optimize_precision: FloatProperty(
-        name="Precision",
-        description=("Tolerence for comparing double keyframes "
-                     "(higher for greater accuracy)"),
-        min=1, max=16,
-        soft_min=1, soft_max=16,
-        default=16.0
         )
 
     applying_preset: BoolProperty(default=False)
@@ -807,13 +761,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             self.use_active_layers = True
             self.auto_name = "LAYER"
 
-            #self.xflip_armature = False
-            #self.xflip_mesh = False
             self.use_exclude_ctrl_bones = False
             self.use_anim = False
-            self.use_anim_skip_noexp = False
-            self.use_anim_optimize = False
-            self.use_shape_key_export = False
 
             if self.preset_applied_extra_flag:
                 if self.preset_last_extra_flag != "DISABLED":
@@ -834,13 +783,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             self.use_active_layers = True
             self.auto_name = "ACTION"
 
-            #self.xflip_armature = False
-            #self.xflip_mesh = False
             self.use_exclude_ctrl_bones = False
             self.use_anim = True
-            self.use_anim_skip_noexp = False
-            self.use_anim_optimize = False
-            self.use_shape_key_export = False
 
             if (self.preset_applied_extra_flag == False):
                 if(self.preset_last_extra_flag == "DISABLED" and self.divine_settings.gr2_settings.extras != "DISABLED"):
@@ -858,13 +802,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             self.use_active_layers = True
             self.auto_name = "LAYER"
 
-            #self.xflip_armature = False
-            #self.xflip_mesh = False
             self.use_exclude_ctrl_bones = False
             self.use_anim = False
-            self.use_anim_skip_noexp = False
-            self.use_anim_optimize = False
-            self.use_shape_key_export = False
 
             if (self.preset_applied_extra_flag == False):
                 if(self.preset_last_extra_flag == "DISABLED" and self.divine_settings.gr2_settings.extras != "DISABLED"):
@@ -941,29 +880,11 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         row1col2.prop(self, "use_tangent")
         row2col2.prop(self, "use_triangles")
-        row3col2.prop(self, "xflip_mesh")
         row4col2.prop(self, "use_exclude_armature_modifier")
 
         row1col3.prop(self, "use_normalize_vert_groups")
-        row2col3.prop(self, "use_limit_total")
         row3col3.prop(self, "use_rest_pose")
         row4col3.label(text="")
-        #if self.use_mesh_modifiers:
-        
-        #col = layout.column(align=True)
-        #row = col.row(align=True)
-        #row.prop(self, "xflip_armature")
-        #row.prop(self, "xflip_mesh")
-
-        box = layout.box()
-        box.prop(self, "use_anim")
-        if self.use_anim:
-            box.label(text="Animation Settings")
-            if self.debug_mode:
-                box.prop(self, "anim_export_all_separate")
-            box.prop(self, "use_anim_skip_noexp")
-            box.prop(self, "use_anim_optimize")
-            box.prop(self, "anim_optimize_precision")
 
         box = layout.box()
 
@@ -979,7 +900,6 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         if self.misc_settings_visible:
             box = layout.box()
             box.prop(self, "use_exclude_ctrl_bones")
-            box.prop(self, "use_shape_key_export")
             
     @property
     def check_extension(self):
@@ -1054,7 +974,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                     project_folder = project.project_folder
                     export_folder = project.export_folder
 
-                    print("Checking {} for {}".format(blend_path, project_folder))
+                    trace("Checking {} for {}".format(blend_path, project_folder))
 
                     if(export_folder != "" and project_folder != "" and 
                         bpy.path.is_subdir(blend_path, project_folder)):
@@ -1062,7 +982,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                             self.directory = export_folder
                             self.filepath = export_folder
                             self.last_filepath = self.filepath
-                            print("Setting start path to export folder: \"{}\"".format(export_folder))
+                            trace("Setting start path to export folder: \"{}\"".format(export_folder))
                             break
 
         self.update_filepath(context)
@@ -1093,6 +1013,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
 
     def pose_apply(self, context, obj):
+        trace(f"Apply armature to '{obj.name}'")
         last_active = getattr(bpy.context.scene.objects, "active", None)
         bpy.ops.object.select_all(action='DESELECT')
         bpy.context.view_layer.objects.active = obj
@@ -1104,6 +1025,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
     
 
     def transform_apply(self, context, obj, location=False, rotation=False, scale=False):
+        trace(f"Apply transform to '{obj.name}'")
         last_active = getattr(bpy.context.scene.objects, "active", None)
         bpy.ops.object.select_all(action='DESELECT')
         bpy.context.view_layer.objects.active = obj
@@ -1117,6 +1039,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
     def copy_obj(self, context, obj, parent=None):
         copy = obj.copy()
         copy.use_fake_user = False
+        trace(f'Copy {obj.name} -> {copy.name}')
 
         data = getattr(obj, "data", None)
         if data != None:
@@ -1135,6 +1058,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         if parent is not None:
             if self.should_export_object(parent):
+                trace(f"Will export parent '{parent.name}' of '{obj.name}'")
                 copy.parent = parent
                 copy.matrix_parent_inverse = obj.matrix_parent_inverse.copy()
                 if parent.type == "ARMATURE":
@@ -1142,7 +1066,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                         obj.parent is not None and mod.object is not None and mod.object.name == obj.parent.name)
                     for mod in armature_modifiers:
                         mod.object = parent
-                        print("   [DOS2DE-Export] Updated armature modifier to point to the copied armature {} for child {}".format(parent.name, copy.name))
+                        trace(f"Reapplied armature modifier of '{parent.name}' of '{obj.name}'")
             else:
                 report("[DOS2DE-Exporter] Object '{}' has a parent '{}' that will not export. Please unparent it or adjust the parent so it will export.".format(
                      copy.name, parent.name))
@@ -1195,7 +1119,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
 
     def make_copy_recursive(self, context, obj, modifyObjects, copies):
-        print("[DOS2DE-Exporter] Copying object '{}'.".format(obj.name))
+        trace(f"Copying object '{obj.name}'")
         copy = self.copy_obj(context, obj)
         modifyObjects.append((obj, copy))
         copies[obj.name] = copy
@@ -1217,13 +1141,9 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
 
     def apply_yup_transform(self, context, obj):
-        print("  Rotating {} to y-up. | (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
-                    degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
-                )
+        trace(f"Rotating {obj.name} to y-up. | (x={degrees(obj.rotation_euler[0])}, y={degrees(obj.rotation_euler[1])}, z={degrees(obj.rotation_euler[2])})")
         obj.rotation_euler = (obj.rotation_euler.to_matrix() @ Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
-        print("  Rotated {} to y-up. | (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
-                    degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
-                )
+        trace(f"Rotated {obj.name} to y-up. | (x={degrees(obj.rotation_euler[0])}, y={degrees(obj.rotation_euler[1])}, z={degrees(obj.rotation_euler[2])})")
         
         self.transform_apply(context, obj, rotation=True)
 
@@ -1252,25 +1172,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         #         )
 
 
-    def apply_xflip_transform(self, context, obj):
-        self.transform_apply(context, obj, scale=True)
-        obj.scale = (-1.0, 1.0, 1.0)
-        self.transform_apply(context, obj, scale=True)
-        #bpy.ops.object.mode_set(mode="EDIT")
-        #bpy.ops.mesh.flip_normals()
-        #bpy.ops.object.mode_set(mode="OBJECT")
-        bm = bmesh.new()
-        bm.from_mesh(obj.data)
-        #bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-        bmesh.ops.reverse_faces(bm, faces=bm.faces)
-        bm.to_mesh(obj.data)
-        bm.clear()
-        obj.data.update()
-        self.transform_apply(context, obj, scale=True)
-        print("Flipped and applied scale transformation for {} ".format(obj.name))
-
-
     def reparent_armature(self, copies, orig, obj):
+        trace(f"Re-parenting armature of '{orig.name}' to '{obj.name}")
         hasArmature = "ARMATURE" in self.object_types
         if orig.modifiers and len(orig.modifiers) > 0:
             old_mesh = obj.data
@@ -1311,14 +1214,17 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         
         if obj.parent is not None and obj.parent.type == "ARMATURE":
             if not hasArmature:
+                trace(f"Copy world transform from '{obj.parent.name}' to '{obj.name}")
                 matrix_copy = obj.parent.matrix_world.copy()
                 obj.parent = None
                 obj.matrix_world = matrix_copy
             else:
+                trace(f"Set parent of '{obj.name}' from '{obj.parent.name}' to '{copies[obj.parent.name].name}'")
                 obj.parent = copies[obj.parent.name]
 
 
     def apply_all_object_transforms(self, context, copies, orig, obj):
+        trace(f"Apply all object transforms of '{orig.name}' to '{obj.name}")
         if obj.type == "ARMATURE":
             if self.use_exclude_armature_modifier:
                 self.pose_apply(context, obj)
@@ -1341,33 +1247,25 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         if self.yup_enabled == "ROTATE" and obj.parent is None:
             self.apply_yup_transform(context, obj)
         
-        if self.xflip_armature and obj.type == "ARMATURE":
-            obj.scale = (-1.0, 1.0, 1.0)
-            self.transform_apply(context, obj, scale=True)
-            print("Flipped and applied scale transformation for {} ".format(obj.name))
-
-        if self.xflip_mesh and obj.type == "MESH":
-            self.apply_xflip_transform(context, obj)
-
         if self.use_mesh_modifiers and obj.type == "MESH":
             self.reparent_armature(copies, orig, obj)
 
         if obj.type == "MESH" and obj.vertex_groups:
-            if self.use_limit_total:
-                bpy.context.view_layer.objects.active = obj
-                obj.select_set(True)
-                bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
-                bpy.ops.object.vertex_group_limit_total(limit=4)
-                bpy.ops.object.mode_set(mode="OBJECT")
-                print("Limited total vertex influences to 4 for {}.".format(obj.name))
-                obj.select_set(False)
+            bpy.context.view_layer.objects.active = obj
+            obj.select_set(True)
+            bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
+            bpy.ops.object.vertex_group_limit_total(limit=4)
+            bpy.ops.object.mode_set(mode="OBJECT")
+            #trace("Limited total vertex influences to 4 for {}.".format(obj.name))
+            obj.select_set(False)
+
             if self.use_normalize_vert_groups:
                 bpy.context.view_layer.objects.active = obj
                 obj.select_set(True)
                 bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
                 bpy.ops.object.vertex_group_normalize_all()
                 bpy.ops.object.mode_set(mode="OBJECT")
-                print("Normalized vertex groups for {}.".format(obj.name))
+                #trace("Normalized vertex groups for {}.".format(obj.name))
                 obj.select_set(False)
     
 
@@ -1434,27 +1332,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         if self.batch_mode:
             if self.use_anim:
-                if self.anim_export_all_separate:
-                    print("[DOS2DE-Exporter] Exporting all actions as separate animation files.")
-                    
-                    armature = next(iter(list(filter(lambda orig, obj: obj.type == "ARMATURE", modifyObjects))), None)
-                    if armature is not None:
-                        for action in bpy.data.actions:
-                            export_name = "{}_Anim_{}".format(armature.name, action.name)
-                            if self.auto_name == "ACTION":
-                                export_name = action.name
-                            
-                            export_filepath = bpy.path.ensure_ext("{}\\{}".format(self.directory, export_name), self.filename_ext)
-                            print("[DOS2DE-Exporter] Setting action to '{}' and exporting as '{}'.".format(action.name, export_filepath))
-                            if armature.animation_data is None:
-                                armature.animation_data_create()
-                            armature.animation_data.action = action
-                            if export_dae.save(self, context, [armature], filepath=export_filepath, **keywords) == {"FINISHED"}:
-                                exported_pathways.append(export_filepath)
-                            else:
-                                report("[DOS2DE-Exporter] Failed to export '{}'.".format(export_filepath))
-                else:
-                    single_mode = True
+                single_mode = True
             else:
                 if self.use_active_layers:
                     progress_total = len(list(i for i in range(20) if context.scene.layers[i]))
@@ -1526,7 +1404,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                 if activeObject.type != "ARMATURE" and current_mode == "POSE":
                     bpy.ops.object.mode_set(mode="OBJECT")
                 else:
-                    bpy.ops.object.mode_set (mode=current_mode)
+                    bpy.ops.object.mode_set(mode=current_mode)
         except Exception as e:
             print("[DOS2DE-Collada] Error setting viewport mode:\n{}".format(e))
 
