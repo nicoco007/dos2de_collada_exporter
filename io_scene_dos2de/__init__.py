@@ -373,10 +373,8 @@ class DivineInvoker:
 
         gr2_args = {
             "force_legacy"              : "force-legacy-version",
-            "store_indices"             : "compact-tris",
             "create_dummyskeleton"      : "build-dummy-skeleton",
-            "yup_conversion"            : "y-up-skeletons",
-            "apply_basis_transforms"    : "apply-basis-transforms"
+            "yup_conversion"            : "apply-basis-transforms",
             #"conform"					: "conform"
         }
 
@@ -790,7 +788,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         name="Y-Up",
         description="Converts from Z-up to Y-up",
         items=yup_rotation_options,
-        default=("DISABLED"),
+        default=("ROTATE"),
         update=yup_local_override_save
         )
 
