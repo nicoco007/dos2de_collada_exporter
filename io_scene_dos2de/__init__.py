@@ -455,6 +455,82 @@ class DivineInvoker:
             return True
 
 
+class ExportTargetCollection:
+    __slots__ = ("targets")
+
+    def __init__(self):
+        self.targets = {}
+
+    def should_export(self, obj):
+        return obj.name in self.targets
+
+    def add(self, obj):
+        self.targets[obj.name] = obj
+
+
+class ExportTargetCollector:
+    __slots__ = ("options")
+
+    def __init__(self, options):
+        self.options = options
+
+    def collect(self, objects):
+        collection = ExportTargetCollection()
+        trace(f'Collecting objects to export:')
+        self.collect_objects(objects, collection)
+        if 'ARMATURE' in self.options.object_types:
+            self.collect_parents(collection)
+        return collection
+
+
+    def collect_objects(self, objects, collection: ExportTargetCollection):
+        for obj in objects:
+            if not collection.should_export(obj):
+                if self.should_export_object(obj):
+                    collection.add(obj)
+                    #self.add_objects_recursive(obj.children, collection)
+
+
+    def add_objects_recursive(self, objects, collection: ExportTargetCollection):
+        for obj in objects:
+            trace(f' - {obj.name}: Marked for export because a parent will export')
+            collection.add(obj)
+            self.add_objects_recursive(obj.children, collection)
+
+
+    def collect_parents(self, collection: ExportTargetCollection):
+        for obj in list(collection.targets.values()):
+            if obj.parent is not None and not collection.should_export(obj.parent) and obj.parent.type == "ARMATURE":
+                trace(f' - {obj.parent.name}: Marked for export because a child with armature modifier will export')
+                collection.add(obj.parent)
+
+
+    def should_export_object(self, obj):
+        if obj.type not in self.options.object_types:
+            trace(f' - {obj.name}: Not exporting objects of type {obj.type}')
+            return False
+        if self.options.use_export_visible and obj.hide_get() or obj.hide_select:
+            trace(f' - {obj.name}: Not visible')
+            return False
+        if self.options.use_export_selected and not obj.select_get():
+            trace(f' - {obj.name}: Not selected')
+            return False
+        if self.options.use_active_layers:
+            valid = True
+            for col in obj.users_collection:
+                if col.hide_viewport == True:
+                    valid = False
+                    break
+                    
+            if not valid:
+                trace(f' - {obj.name}: Not visible in any user collections')
+                return False
+
+        trace(f' - {obj.name}: OK')
+        return True
+    
+
+
 class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
     """Export to Collada/GR2 with Divinity/Baldur's Gate-specific options (.dae/.gr2)"""
     bl_idname = "export_scene.dos2de_collada"
@@ -520,11 +596,9 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
     def update_filepath(self, context):
         if self.directory == "":
             self.directory = os.path.dirname(bpy.data.filepath)
-            trace(f"Set default dir: {self.directory}")
 
         if self.filepath == "":
             self.filepath = bpy.path.ensure_ext("{}\\{}".format(self.directory, str.replace(bpy.path.basename(bpy.data.filepath), ".blend", "")), self.filename_ext)
-            trace(f"Set default path: {self.filepath}")
 
         if self.filepath != "" and self.last_filepath == "":
             self.last_filepath = self.filepath
@@ -993,27 +1067,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         return {'RUNNING_MODAL'}
 
 
-    def should_export_object(self, obj):
-        if self.use_export_visible and obj.hide_get() or obj.hide_select:
-            return False
-        if self.use_export_selected and not obj.select_get():
-            return False
-        if self.use_active_layers:
-            valid = True
-            for col in obj.users_collection:
-                if col.hide_viewport == True:
-                    valid = False
-                    break
-                    
-            if not valid:
-                return False
-
-        #print("[DOS2DE-Exporter] Obj '{}' can be exported".format(obj.name))
-        return True
-
-
     def pose_apply(self, context, obj):
-        trace(f"Apply armature to '{obj.name}'")
+        trace(f"    - Apply pose to '{obj.name}'")
         last_active = getattr(bpy.context.scene.objects, "active", None)
         bpy.ops.object.select_all(action='DESELECT')
         bpy.context.view_layer.objects.active = obj
@@ -1025,7 +1080,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
     
 
     def transform_apply(self, context, obj, location=False, rotation=False, scale=False):
-        trace(f"Apply transform to '{obj.name}'")
+        trace(f"    - Apply transform to '{obj.name}'")
         last_active = getattr(bpy.context.scene.objects, "active", None)
         bpy.ops.object.select_all(action='DESELECT')
         bpy.context.view_layer.objects.active = obj
@@ -1036,10 +1091,10 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         bpy.context.view_layer.objects.active = last_active
 
 
-    def copy_obj(self, context, obj, parent=None):
+    def copy_obj(self, context, obj, old_parent):
         copy = obj.copy()
         copy.use_fake_user = False
-        trace(f'Copy {obj.name} -> {copy.name}')
+        trace(f" - Copy '{obj.name}' -> '{copy.name}'")
 
         data = getattr(obj, "data", None)
         if data != None:
@@ -1054,22 +1109,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         context.collection.objects.link(copy)
 
-        print("[DOS2DE-Export] Created a copy of object/data {} ({})".format(obj.name, copy.name))
-
-        if parent is not None:
-            if self.should_export_object(parent):
-                trace(f"Will export parent '{parent.name}' of '{obj.name}'")
-                copy.parent = parent
-                copy.matrix_parent_inverse = obj.matrix_parent_inverse.copy()
-                if parent.type == "ARMATURE":
-                    armature_modifiers = (mod for mod in copy.modifiers if mod.type == "ARMATURE" and 
-                        obj.parent is not None and mod.object is not None and mod.object.name == obj.parent.name)
-                    for mod in armature_modifiers:
-                        mod.object = parent
-                        trace(f"Reapplied armature modifier of '{parent.name}' of '{obj.name}'")
-            else:
-                report("[DOS2DE-Exporter] Object '{}' has a parent '{}' that will not export. Please unparent it or adjust the parent so it will export.".format(
-                     copy.name, parent.name))
+        if old_parent is not None and not self.objects_to_export.should_export(old_parent):
+            report(f"Object '{obj.name}' has a parent '{old_parent.name}' that will not export. Please unparent it or adjust the parent so it will export.")
 
         return copy
     
@@ -1105,29 +1146,13 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             current_operator = None
 
 
-    def collect_export_objects(self, objects, selected, targets):
-        for obj in objects:
-            should_export = self.should_export_object(obj)
-            if obj.select_get():
-                selected.append(obj)
-                obj.select_set(False)
-            
-            if should_export:
-                targets.append(obj)
-            else:
-                self.collect_export_objects(obj.children, selected, targets)
-
-
-    def make_copy_recursive(self, context, obj, modifyObjects, copies):
-        trace(f"Copying object '{obj.name}'")
-        copy = self.copy_obj(context, obj)
+    def make_copy_recursive(self, context, obj, modifyObjects, copies, old_parent):
+        copy = self.copy_obj(context, obj, old_parent)
         modifyObjects.append((obj, copy))
         copies[obj.name] = copy
 
-        if obj.parent is not None and not self.should_export_object(obj.parent):
-            msg = "[DOS2DE-Exporter] Object '{}' has a parent '{}' that will not export. Unparenting copy and preserving transform.".format(
-                copy.name, obj.parent.name)
-            report(msg)
+        if obj.parent is not None and not self.objects_to_export.should_export(obj.parent):
+            report(f"Object '{copy.name}' has a parent '{obj.parent.name}' that will not export. Unparenting copy and preserving transform.")
             bpy.ops.object.select_all(action='DESELECT')
             bpy.context.view_layer.objects.active = copy
             copy.select_set(True)
@@ -1136,14 +1161,15 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             bpy.context.view_layer.objects.active = None
 
         for child in obj.children:
-            if self.should_export_object(child):
-                self.make_copy_recursive(context, child, modifyObjects, copies)
+            if self.objects_to_export.should_export(child):
+                self.make_copy_recursive(context, child, modifyObjects, copies, obj)
 
 
     def apply_yup_transform(self, context, obj):
-        trace(f"Rotating {obj.name} to y-up. | (x={degrees(obj.rotation_euler[0])}, y={degrees(obj.rotation_euler[1])}, z={degrees(obj.rotation_euler[2])})")
+        trans_before = f"(x={degrees(obj.rotation_euler[0])}, y={degrees(obj.rotation_euler[1])}, z={degrees(obj.rotation_euler[2])})"
         obj.rotation_euler = (obj.rotation_euler.to_matrix() @ Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
-        trace(f"Rotated {obj.name} to y-up. | (x={degrees(obj.rotation_euler[0])}, y={degrees(obj.rotation_euler[1])}, z={degrees(obj.rotation_euler[2])})")
+        trans_after = f"(x={degrees(obj.rotation_euler[0])}, y={degrees(obj.rotation_euler[1])}, z={degrees(obj.rotation_euler[2])})"
+        trace(f"    - Rotate {obj.name} to y-up: {trans_before} -> {trans_after}")
         
         self.transform_apply(context, obj, rotation=True)
 
@@ -1172,59 +1198,72 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         #         )
 
 
-    def reparent_armature(self, copies, orig, obj):
-        trace(f"Re-parenting armature of '{orig.name}' to '{obj.name}")
-        hasArmature = "ARMATURE" in self.object_types
-        if orig.modifiers and len(orig.modifiers) > 0:
-            old_mesh = obj.data
+    def get_armature_modifier(self, obj):
+        armature_mods = [mod for mod in obj.modifiers if mod.type == "ARMATURE"]
+        return armature_mods[0] if len(armature_mods) > 0 else None
 
-            armature_modifier = orig.modifiers.get("Armature")
-            armature_poses = [arm.pose_position for arm in bpy.data.armatures]
 
-            if self.use_rest_pose:
-                for arm in bpy.data.armatures:
-                    arm.pose_position = "REST"
+    def reparent_armature(self, orig, obj):
+        mod = self.get_armature_modifier(orig)
+        if mod is not None:
+            trace(f"    - Re-parenting armature from '{orig.parent.name}' to '{obj.parent.name}'")
+            obj.modifiers.remove(self.get_armature_modifier(obj))
+            new_mod = obj.modifiers.new(mod.name, "ARMATURE")
+            new_mod.object = obj.parent
+            new_mod.invert_vertex_group = mod.invert_vertex_group
+            new_mod.use_bone_envelopes = mod.use_bone_envelopes
+            new_mod.use_deform_preserve_volume = mod.use_deform_preserve_volume
+            new_mod.use_multi_modifier = mod.use_multi_modifier
+            new_mod.use_vertex_groups = mod.use_vertex_groups
+            new_mod.vertex_group = mod.vertex_group
 
-            apply_modifiers = len(obj.modifiers) > 0 and self.use_mesh_modifiers
-            if not apply_modifiers:
-                obj.modifiers.clear()
 
-            dg = bpy.context.evaluated_depsgraph_get()
-            mesh = obj.to_mesh(preserve_all_data_layers=True, depsgraph=dg).copy()
-
-            #Reset poses
-            if armature_poses:
-                for i, arm in enumerate(bpy.data.armatures):
-                    arm.pose_position = armature_poses[i]
-
-            obj.modifiers.clear()
-
-            if armature_modifier:
-                new_mod = obj.modifiers.new(armature_modifier.name, "ARMATURE")
-                new_mod.invert_vertex_group = armature_modifier.invert_vertex_group
-                new_mod.object = armature_modifier.object
-                new_mod.use_bone_envelopes = armature_modifier.use_bone_envelopes
-                new_mod.use_deform_preserve_volume = armature_modifier.use_deform_preserve_volume
-                new_mod.use_multi_modifier = armature_modifier.use_multi_modifier
-                new_mod.use_vertex_groups = armature_modifier.use_vertex_groups
-                new_mod.vertex_group = armature_modifier.vertex_group
-            
-            obj.data = mesh
-            bpy.data.meshes.remove(old_mesh)
+    def apply_modifiers(self, obj):
+        modifiers = [mod for mod in obj.modifiers if mod.type != 'ARMATURE']
+        if len(modifiers) == 0:
+            return
         
-        if obj.parent is not None and obj.parent.type == "ARMATURE":
-            if not hasArmature:
-                trace(f"Copy world transform from '{obj.parent.name}' to '{obj.name}")
-                matrix_copy = obj.parent.matrix_world.copy()
-                obj.parent = None
-                obj.matrix_world = matrix_copy
-            else:
-                trace(f"Set parent of '{obj.name}' from '{obj.parent.name}' to '{copies[obj.parent.name].name}'")
-                obj.parent = copies[obj.parent.name]
+        trace(f"    - Apply modifiers on '{obj.name}'")
+        if self.use_rest_pose:
+            armature_poses = {arm.name: arm.pose_position for arm in bpy.data.armatures}
+            for arm in bpy.data.armatures:
+                arm.pose_position = "REST"
+
+        if not self.use_mesh_modifiers:
+            for modifier in modifiers:
+                obj.modifiers.remove(modifier)
+
+        old_mesh = obj.data
+        dg = bpy.context.evaluated_depsgraph_get()
+        mesh = obj.to_mesh(preserve_all_data_layers=True, depsgraph=dg).copy()
+
+        # Reset poses
+        if self.use_rest_pose:
+            for arm in bpy.data.armatures.values():
+                arm.pose_position = armature_poses[arm.name]
+
+        if self.use_mesh_modifiers:
+            for modifier in modifiers:
+                obj.modifiers.remove(modifier)
+        
+        obj.data = mesh
+        bpy.data.meshes.remove(old_mesh)
+
+
+    def reparent_object(self, copies, orig, obj):
+        if obj.parent.type == "ARMATURE" and self.objects_to_export.should_export(obj.parent):
+            trace(f"    - Set parent of '{obj.name}' from '{orig.parent.name}' to '{copies[orig.parent.name]}'")
+            obj.parent = copies[orig.parent.name]
+            self.reparent_armature(orig, obj)
+        else:
+            trace(f"    - Copy world transform and unparent from '{obj.parent.name}' to '{obj.name}")
+            matrix_copy = obj.parent.matrix_world.copy()
+            obj.parent = None
+            obj.matrix_world = matrix_copy
 
 
     def apply_all_object_transforms(self, context, copies, orig, obj):
-        trace(f"Apply all object transforms of '{orig.name}' to '{obj.name}")
+        trace(f" - Transform '{orig.name}' -> '{obj.name}")
         if obj.type == "ARMATURE":
             if self.use_exclude_armature_modifier:
                 self.pose_apply(context, obj)
@@ -1236,10 +1275,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         export_props = getattr(obj, "llexportprops", None)
         if export_props is not None:
             if not obj.parent:
-                print("Preparing export properties for {}".format(obj.name))
                 export_props.prepare(context, obj)
                 for childobj in obj.children:
-                    print("  Preparing export properties for child {}".format(childobj.name))
                     childobj.llexportprops.prepare(context, childobj)
                     childobj.llexportprops.prepare_name(context, childobj)
             export_props.prepare_name(context, obj)
@@ -1247,8 +1284,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         if self.yup_enabled == "ROTATE" and obj.parent is None:
             self.apply_yup_transform(context, obj)
         
-        if self.use_mesh_modifiers and obj.type == "MESH":
-            self.reparent_armature(copies, orig, obj)
+        if obj.type == "MESH" and obj.parent is not None:
+            self.reparent_object(copies, orig, obj)
 
         if obj.type == "MESH" and obj.vertex_groups:
             bpy.context.view_layer.objects.active = obj
@@ -1256,7 +1293,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
             bpy.ops.object.vertex_group_limit_total(limit=4)
             bpy.ops.object.mode_set(mode="OBJECT")
-            #trace("Limited total vertex influences to 4 for {}.".format(obj.name))
+            #trace("    - Limited total vertex influences to 4 for {}.".format(obj.name))
             obj.select_set(False)
 
             if self.use_normalize_vert_groups:
@@ -1265,7 +1302,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                 bpy.ops.object.mode_set(mode="WEIGHT_PAINT")
                 bpy.ops.object.vertex_group_normalize_all()
                 bpy.ops.object.mode_set(mode="OBJECT")
-                #trace("Normalized vertex groups for {}.".format(obj.name))
+                #trace("    - Normalized vertex groups for {}.".format(obj.name))
                 obj.select_set(False)
     
 
@@ -1293,27 +1330,32 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         if bpy.context.view_layer.objects.active:
             activeObject = bpy.context.view_layer.objects.active
         
-        targetObjects = []
         modifyObjects = []
         selectedObjects = []
         copies = {}
 
         if activeObject is not None and not activeObject.hide_get():
             bpy.ops.object.mode_set(mode="OBJECT")
-        
-        self.collect_export_objects(context.scene.objects, selectedObjects, targetObjects)
 
-        if not self.validate_export_order(targetObjects):
+        collector = ExportTargetCollector(self)
+        self.objects_to_export = collector.collect(context.scene.objects)
+
+        for obj in self.objects_to_export.targets.values():
+            if obj.select_get():
+                selectedObjects.append(obj)
+                obj.select_set(False)
+
+        if not self.validate_export_order(self.objects_to_export.targets.values()):
             return {"FINISHED"}
         
         context.scene.ls_properties.metadata_version = ColladaMetadataLoader.LSLIB_METADATA_VERSION
 
-        for obj in targetObjects:
-            if obj.parent is not None and self.should_export_object(obj.parent):
-                print("[DOS2DE-Exporter] object '{}' has a parent that will export.".format(obj.name))
-            else:
-                self.make_copy_recursive(context, obj, modifyObjects, copies)
+        trace(f'Copying objects:')
+        for obj in self.objects_to_export.targets.values():
+            if obj.parent is None or not self.objects_to_export.should_export(obj.parent):
+                self.make_copy_recursive(context, obj, modifyObjects, copies, None)
 
+        trace(f'Applying transforms:')
         for (orig, obj) in modifyObjects:
             self.apply_all_object_transforms(context, copies, orig, obj)
 
