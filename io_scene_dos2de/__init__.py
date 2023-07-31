@@ -206,19 +206,11 @@ class GR2_ExportSettings(PropertyGroup):
     )
     yup_conversion: BoolProperty(
         name="Convert to Y-Up",
-        default=False
-    )
-    apply_basis_transforms: BoolProperty(
-        name="Apply Y-Up Transformations",
-        default=False
+        default=True
     )
     force_legacy: BoolProperty(
         name="Force Legacy GR2 Version Tag",
         default=False
-    )
-    store_indices: BoolProperty(
-        name="Store Compact Tri Indices",
-        default=True
     )
     create_dummyskeleton: BoolProperty(
         name="Create Dummy Skeleton",
@@ -228,9 +220,7 @@ class GR2_ExportSettings(PropertyGroup):
     def draw(self, context, obj):
         obj.label(text="GR2 Options")
         obj.prop(self, "yup_conversion")
-        obj.prop(self, "apply_basis_transforms")
         obj.prop(self, "force_legacy")
-        obj.prop(self, "store_indices")
         obj.prop(self, "create_dummyskeleton")
 
         obj.label(text="Extra Properties (Global)")
