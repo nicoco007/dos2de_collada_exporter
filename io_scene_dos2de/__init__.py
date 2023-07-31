@@ -444,13 +444,17 @@ class DivineInvoker:
 
 
 class ExportTargetCollection:
-    __slots__ = ("targets")
+    __slots__ = ("targets", "ordered_targets")
 
     def __init__(self):
         self.targets = {}
+        self.ordered_targets = []
 
     def should_export(self, obj):
         return obj.name in self.targets
+
+    def is_root(self, obj):
+        return self.should_export(obj) and (obj.parent is None or not self.should_export(obj.parent))
 
     def add(self, obj):
         self.targets[obj.name] = obj
@@ -468,7 +472,24 @@ class ExportTargetCollector:
         self.collect_objects(objects, collection)
         if 'ARMATURE' in self.options.object_types:
             self.collect_parents(collection)
+        self.build_target_order(collection)
         return collection
+
+
+    # Need to make sure that we're going parent -> child order when applying transforms,
+    # otherwise a modifier/transform apply step on the parent could leave the child transform unapplied
+    def build_target_order(self, collection: ExportTargetCollection):
+        for obj in collection.targets.values():
+            if collection.is_root(obj):
+                collection.ordered_targets.append(obj)
+                self.build_target_children(collection, obj)
+
+
+    def build_target_children(self, collection: ExportTargetCollection, obj):
+        for child in obj.children:
+            if collection.should_export(child):
+                collection.ordered_targets.append(child)
+                self.build_target_children(collection, child)
 
 
     def collect_objects(self, objects, collection: ExportTargetCollection):
@@ -775,6 +796,10 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         description=("Export all actions for the first armature found in separate DAE files"),
         default=False
         )
+    keep_copies: BoolProperty(
+        name="(DEBUG) Keep Object Copies",
+        default=False
+        )
 
     applying_preset: BoolProperty(default=False)
     yup_local_override: BoolProperty(default=False)
@@ -915,38 +940,25 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         box.prop(self, "auto_name")
         box.prop(self, "yup_enabled")
        
-        row1 = layout.row(align=True)
-        row1col1 = row1.column(align=True)
-        row1col2 = row1.column(align=True)
-        row1col3 = row1.column(align=True)
-       
-        row2 = layout.row(align=True)
-        row2col1 = row2.column(align=True)
-        row2col2 = row2.column(align=True)
-        row2col3 = row2.column(align=True)
-       
-        row3 = layout.row(align=True)
-        row3col1 = row3.column(align=True)
-        row3col2 = row3.column(align=True)
-        row3col3 = row3.column(align=True)
-       
-        row4 = layout.row(align=True)
-        row4col1 = row4.column(align=True)
-        row4col2 = row4.column(align=True)
-        row4col3 = row4.column(align=True)
+        row = layout.row(align=True)
+        row.prop(self, "use_active_layers")
+        row.prop(self, "use_tangent")
 
-        row1col1.prop(self, "use_active_layers")
-        row2col1.prop(self, "use_export_visible")
-        row3col1.prop(self, "use_export_selected")
-        row4col1.prop(self, "use_mesh_modifiers")
+        row = layout.row(align=True)
+        row.prop(self, "use_export_visible")
+        row.prop(self, "use_triangles")
+       
+        row = layout.row(align=True)
+        row.prop(self, "use_export_selected")
+        row.prop(self, "use_mesh_modifiers")
+       
+        row = layout.row(align=True)
+        row.prop(self, "use_exclude_armature_modifier")
+        row.prop(self, "use_normalize_vert_groups")
 
-        row1col2.prop(self, "use_tangent")
-        row2col2.prop(self, "use_triangles")
-        row4col2.prop(self, "use_exclude_armature_modifier")
-
-        row1col3.prop(self, "use_normalize_vert_groups")
-        row3col3.prop(self, "use_rest_pose")
-        row4col3.label(text="")
+        row = layout.row(align=True)
+        row.prop(self, "use_rest_pose")
+        row.label(text="")
 
         box = layout.box()
 
@@ -962,6 +974,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         if self.misc_settings_visible:
             box = layout.box()
             box.prop(self, "use_exclude_ctrl_bones")
+            box.prop(self, "keep_copies")
             
     @property
     def check_extension(self):
@@ -1067,8 +1080,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         bpy.context.view_layer.objects.active = last_active
     
 
-    def transform_apply(self, context, obj, location=False, rotation=False, scale=False):
-        trace(f"    - Apply transform to '{obj.name}'")
+    def transform_apply(self, obj, location=False, rotation=False, scale=False):
+        trace(f"    - Apply transform on '{obj.name}'")
         last_active = getattr(bpy.context.scene.objects, "active", None)
         bpy.ops.object.select_all(action='DESELECT')
         bpy.context.view_layer.objects.active = obj
@@ -1134,9 +1147,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             current_operator = None
 
 
-    def make_copy_recursive(self, context, obj, modifyObjects, copies, old_parent):
+    def make_copy_recursive(self, context, obj, copies, old_parent):
         copy = self.copy_obj(context, obj, old_parent)
-        modifyObjects.append((obj, copy))
         copies[obj.name] = copy
 
         if obj.parent is not None and not self.objects_to_export.should_export(obj.parent):
@@ -1154,40 +1166,14 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
         for child in obj.children:
             if self.objects_to_export.should_export(child):
-                self.make_copy_recursive(context, child, modifyObjects, copies, obj)
+                self.make_copy_recursive(context, child, copies, obj)
 
 
-    def apply_yup_transform(self, context, obj):
+    def apply_yup_transform(self, obj):
         trans_before = f"(x={degrees(obj.rotation_euler[0])}, y={degrees(obj.rotation_euler[1])}, z={degrees(obj.rotation_euler[2])})"
         obj.rotation_euler = (obj.rotation_euler.to_matrix() @ Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
         trans_after = f"(x={degrees(obj.rotation_euler[0])}, y={degrees(obj.rotation_euler[1])}, z={degrees(obj.rotation_euler[2])})"
         trace(f"    - Rotate {obj.name} to y-up: {trans_before} -> {trans_after}")
-        
-        self.transform_apply(context, obj, rotation=True)
-
-        for childobj in obj.children:
-            childobj.select_set(True)
-            # rot_x = degrees(childobj.rotation_euler[0])
-            # if rot_x != 0:
-            #     parent_yup_applied = round(rot_x) == -90
-            #     print("  Applying rotation transform to child {} | (x={})".format(childobj.name, rot_x))
-            #     self.transform_apply(context, childobj, rotation=True)
-
-            #     if parent_yup_applied == False:
-            #         print("    Rotating child to y-up: (x={}, y={}, z={})".format(degrees(childobj.rotation_euler[0]),
-            #                 degrees(childobj.rotation_euler[1]), degrees(childobj.rotation_euler[2]))
-            #             )
-            #         childobj.rotation_euler = (childobj.rotation_euler.to_matrix() @ Matrix.Rotation(radians(-90), 3, 'X')).to_euler()
-            #         print("      Rotated child {} to y-up. (x={})".format(childobj.name, degrees(childobj.rotation_euler[0])))
-            #         self.transform_apply(context, childobj, rotation=True)
-
-        bpy.context.view_layer.objects.active = obj
-        obj.select_set(True)
-        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-        bpy.ops.object.select_all(action='DESELECT')
-        # print(" {} Final (x={}, y={}, z={})".format(obj.name, degrees(obj.rotation_euler[0]),
-        #             degrees(obj.rotation_euler[1]), degrees(obj.rotation_euler[2]))
-        #         )
 
 
     def get_armature_modifier(self, obj):
@@ -1211,6 +1197,8 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
 
     def apply_modifiers(self, obj):
+        self.transform_apply(obj, location=True, rotation=True, scale=True)
+
         modifiers = [mod for mod in obj.modifiers if mod.type != 'ARMATURE']
         if len(modifiers) == 0:
             return
@@ -1274,10 +1262,13 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             export_props.prepare_name(context, obj)
         
         if self.yup_enabled == "ROTATE" and obj.parent is None:
-            self.apply_yup_transform(context, obj)
+            self.apply_yup_transform(obj)
         
         if obj.type == "MESH" and obj.parent is not None:
             self.reparent_object(copies, orig, obj)
+        
+        if obj.type == "MESH":
+            self.apply_modifiers(obj)
 
         if obj.type == "MESH" and obj.vertex_groups:
             bpy.context.view_layer.objects.active = obj
@@ -1296,105 +1287,9 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                 bpy.ops.object.mode_set(mode="OBJECT")
                 #trace("    - Normalized vertex groups for {}.".format(obj.name))
                 obj.select_set(False)
-    
 
-    def really_execute(self, context):
-        output_path = Path(self.properties.filepath)
-        if output_path.suffix.lower() == '.gr2':
-            temp = tempfile.NamedTemporaryFile(delete=False)
-            temp.close()
-            tempfile_path = Path(temp.name)
-            collada_path = tempfile_path
-        else:
-            tempfile_path = None
-            collada_path = output_path
 
-        result = ""
-        
-        addon_prefs = get_prefs(context)
-
-        if bpy.context.object is not None and bpy.context.object.mode is not None:
-            current_mode = bpy.context.object.mode
-        else:
-            current_mode = "OBJECT"
-
-        activeObject = None
-        if bpy.context.view_layer.objects.active:
-            activeObject = bpy.context.view_layer.objects.active
-        
-        modifyObjects = []
-        selectedObjects = []
-        copies = {}
-
-        if activeObject is not None and not activeObject.hide_get():
-            bpy.ops.object.mode_set(mode="OBJECT")
-
-        collector = ExportTargetCollector(self)
-        self.objects_to_export = collector.collect(context.scene.objects)
-
-        for obj in self.objects_to_export.targets.values():
-            if obj.select_get():
-                selectedObjects.append(obj)
-                obj.select_set(False)
-
-        if not self.validate_export_order(self.objects_to_export.targets.values()):
-            return {"FINISHED"}
-        
-        context.scene.ls_properties.metadata_version = ColladaMetadataLoader.LSLIB_METADATA_VERSION
-
-        trace(f'Copying objects:')
-        for obj in self.objects_to_export.targets.values():
-            if obj.parent is None or not self.objects_to_export.should_export(obj.parent):
-                self.make_copy_recursive(context, obj, modifyObjects, copies, None)
-
-        trace(f'Applying transforms:')
-        for (orig, obj) in modifyObjects:
-            self.apply_all_object_transforms(context, copies, orig, obj)
-
-        keywords = self.as_keywords(ignore=("axis_forward",
-                                            "axis_up",
-                                            "global_scale",
-                                            "check_existing",
-                                            "filter_glob",
-                                            "xna_validate",
-                                            "filepath"
-                                            ))
-
-        exported_pathways = []
-
-        single_mode = self.batch_mode == False
-
-        if self.batch_mode:
-            if self.use_anim:
-                single_mode = True
-            else:
-                if self.use_active_layers:
-                    progress_total = len(list(i for i in range(20) if context.scene.layers[i]))
-                    for i in range(20):
-                        if context.scene.layers[i]:
-                            export_list = list(filter(lambda orig, obj: obj.layers[i], modifyObjects))
-                            export_name = "{}_Layer{}".format(bpy.path.basename(bpy.context.blend_data.filepath), i)
-
-                            if self.auto_name == "LAYER" and "namedlayers" in bpy.data.scenes[context.scene.name]:
-                                namedlayers = getattr(bpy.data.scenes[context.scene.name], "namedlayers", None)
-                                if namedlayers is not None:
-                                    export_name = namedlayers.layers[i].name
-                            
-                            export_filepath = bpy.path.ensure_ext("{}\\{}".format(self.directory, export_name), self.filename_ext)
-                            print("[DOS2DE-Exporter] Batch exporting layer '{}' as '{}'.".format(i, export_filepath))
-
-                            if export_dae.save(self, context, export_list, filepath=export_filepath, **keywords) == {"FINISHED"}:
-                                exported_pathways.append(export_filepath)
-                            else:
-                                report( "[DOS2DE-Exporter] Failed to export '{}'.".format(export_filepath))
-                else:
-                    single_mode = True
-
-        if single_mode:
-            result = export_dae.save(self, context, copies.values(), filepath=str(collada_path), **keywords)
-            if result == {"FINISHED"}:
-                exported_pathways.append(str(collada_path))
-
+    def remove_copies(self, copies):
         bpy.ops.object.select_all(action='DESELECT')
 
         for obj in copies.values():
@@ -1423,6 +1318,110 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         for block in bpy.data.images:
             if block.users == 0:
                 bpy.data.images.remove(block)
+    
+
+    def really_execute(self, context):
+        output_path = Path(self.properties.filepath)
+        if output_path.suffix.lower() == '.gr2':
+            temp = tempfile.NamedTemporaryFile(delete=False)
+            temp.close()
+            tempfile_path = Path(temp.name)
+            collada_path = tempfile_path
+        else:
+            tempfile_path = None
+            collada_path = output_path
+
+        result = ""
+        
+        addon_prefs = get_prefs(context)
+
+        if bpy.context.object is not None and bpy.context.object.mode is not None:
+            current_mode = bpy.context.object.mode
+        else:
+            current_mode = "OBJECT"
+
+        activeObject = None
+        if bpy.context.view_layer.objects.active:
+            activeObject = bpy.context.view_layer.objects.active
+        
+        selectedObjects = []
+        copies = {}
+
+        if activeObject is not None and not activeObject.hide_get():
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+        collector = ExportTargetCollector(self)
+        self.objects_to_export = collector.collect(context.scene.objects)
+
+        for obj in self.objects_to_export.ordered_targets:
+            if obj.select_get():
+                selectedObjects.append(obj)
+                obj.select_set(False)
+
+        if not self.validate_export_order(self.objects_to_export.ordered_targets):
+            return {"FINISHED"}
+        
+        context.scene.ls_properties.metadata_version = ColladaMetadataLoader.LSLIB_METADATA_VERSION
+
+        trace(f'Copying objects:')
+        for obj in self.objects_to_export.ordered_targets:
+            if obj.parent is None or not self.objects_to_export.should_export(obj.parent):
+                self.make_copy_recursive(context, obj, copies, None)
+
+        ordered_copies = []
+        for obj in self.objects_to_export.ordered_targets:
+            ordered_copies.append((obj, copies[obj.name]))
+
+        trace(f'Applying transforms:')
+        for (orig, obj) in ordered_copies:
+            self.apply_all_object_transforms(context, copies, orig, obj)
+
+        keywords = self.as_keywords(ignore=("axis_forward",
+                                            "axis_up",
+                                            "global_scale",
+                                            "check_existing",
+                                            "filter_glob",
+                                            "xna_validate",
+                                            "filepath"
+                                            ))
+
+        exported_pathways = []
+
+        single_mode = self.batch_mode == False
+
+        if self.batch_mode:
+            if self.use_anim:
+                single_mode = True
+            else:
+                if self.use_active_layers:
+                    progress_total = len(list(i for i in range(20) if context.scene.layers[i]))
+                    for i in range(20):
+                        if context.scene.layers[i]:
+                            export_list = list(filter(lambda orig, obj: obj.layers[i], ordered_copies))
+                            export_name = "{}_Layer{}".format(bpy.path.basename(bpy.context.blend_data.filepath), i)
+
+                            if self.auto_name == "LAYER" and "namedlayers" in bpy.data.scenes[context.scene.name]:
+                                namedlayers = getattr(bpy.data.scenes[context.scene.name], "namedlayers", None)
+                                if namedlayers is not None:
+                                    export_name = namedlayers.layers[i].name
+                            
+                            export_filepath = bpy.path.ensure_ext("{}\\{}".format(self.directory, export_name), self.filename_ext)
+                            print("[DOS2DE-Exporter] Batch exporting layer '{}' as '{}'.".format(i, export_filepath))
+
+                            if export_dae.save(self, context, export_list, filepath=export_filepath, **keywords) == {"FINISHED"}:
+                                exported_pathways.append(export_filepath)
+                            else:
+                                report( "[DOS2DE-Exporter] Failed to export '{}'.".format(export_filepath))
+                else:
+                    single_mode = True
+
+        if single_mode:
+            result = export_dae.save(self, context, copies.values(), filepath=str(collada_path), **keywords)
+            if result == {"FINISHED"}:
+                exported_pathways.append(str(collada_path))
+
+        if not self.keep_copies:
+            self.remove_copies(copies)
 
         bpy.ops.object.select_all(action='DESELECT')
         
