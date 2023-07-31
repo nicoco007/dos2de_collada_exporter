@@ -1150,6 +1150,10 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             copy.select_set(False)
             bpy.context.view_layer.objects.active = None
 
+            armature_mod = self.get_armature_modifier(copy)
+            if armature_mod is not None:
+                copy.modifiers.remove(armature_mod)
+
         for child in obj.children:
             if self.objects_to_export.should_export(child):
                 self.make_copy_recursive(context, child, modifyObjects, copies, obj)
