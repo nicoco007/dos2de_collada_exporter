@@ -296,6 +296,10 @@ class Divine_ExportSettings(PropertyGroup):
         name="Recalculate Inverse World Transforms",
         default=False
     )
+    disable_qtangents: BoolProperty(
+        name="Disable QTangents",
+        default=False
+        )
 
     keep_bind_info: BoolProperty(
 		name="Keep Bind Info",
@@ -317,7 +321,8 @@ class Divine_ExportSettings(PropertyGroup):
         "deduplicate_uvs",
         "recalculate_normals",
         "recalculate_tangents",
-        "recalculate_iwt"
+        "recalculate_iwt",
+        "disable_qtangents"
     ]
 
 
@@ -368,7 +373,8 @@ class DivineInvoker:
             "recalculate_tangents"      : "recalculate-tangents",
             "recalculate_iwt"           : "recalculate-iwt",
             "flip_uvs"                  : "flip-uvs",
-            "ignore_uv_nan"             : "ignore-uv-nan"
+            "ignore_uv_nan"             : "ignore-uv-nan",
+            "disable_qtangents"         : "disable-qtangents"
         }
 
         gr2_args = {
