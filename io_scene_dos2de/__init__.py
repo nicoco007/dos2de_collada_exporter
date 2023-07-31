@@ -1232,7 +1232,7 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
 
     def reparent_object(self, copies, orig, obj):
         if obj.parent.type == "ARMATURE" and self.objects_to_export.should_export(obj.parent):
-            trace(f"    - Set parent of '{obj.name}' from '{orig.parent.name}' to '{copies[orig.parent.name]}'")
+            trace(f"    - Set parent of '{obj.name}' from '{orig.parent.name}' to '{copies[orig.parent.name].name}'")
             obj.parent = copies[orig.parent.name]
             self.reparent_armature(orig, obj)
         else:
@@ -1242,8 +1242,9 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
             obj.matrix_world = matrix_copy
 
 
-    def apply_all_object_transforms(self, context, copies, orig, obj):
-        trace(f" - Transform '{orig.name}' -> '{obj.name}")
+    def update_hierarchy(self, context, copies, orig, obj):
+        trace(f" - Prepare '{orig.name}' -> '{obj.name}")
+
         if obj.type == "ARMATURE":
             if self.use_exclude_armature_modifier:
                 self.pose_apply(context, obj)
@@ -1251,6 +1252,13 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                 d = getattr(obj, "data", None)
                 if d is not None:
                     d.pose_position = "REST"
+        
+        if obj.type == "MESH" and obj.parent is not None:
+            self.reparent_object(copies, orig, obj)
+
+
+    def apply_all_object_transforms(self, context, copies, orig, obj):
+        trace(f" - Transform '{orig.name}' -> '{obj.name}")
 
         export_props = getattr(obj, "llexportprops", None)
         if export_props is not None:
@@ -1261,14 +1269,10 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
                     childobj.llexportprops.prepare_name(context, childobj)
             export_props.prepare_name(context, obj)
         
-        if self.yup_enabled == "ROTATE" and obj.parent is None:
+        if self.yup_enabled == "ROTATE" and self.objects_to_export.is_root(orig):
             self.apply_yup_transform(obj)
         
-        if obj.type == "MESH" and obj.parent is not None:
-            self.reparent_object(copies, orig, obj)
-        
-        if obj.type == "MESH":
-            self.apply_modifiers(obj)
+        self.apply_modifiers(obj)
 
         if obj.type == "MESH" and obj.vertex_groups:
             bpy.context.view_layer.objects.active = obj
@@ -1371,6 +1375,12 @@ class DIVINITYEXPORTER_OT_export_collada(Operator, ExportHelper):
         ordered_copies = []
         for obj in self.objects_to_export.ordered_targets:
             ordered_copies.append((obj, copies[obj.name]))
+
+        trace(f'Preparing hierarchy:')
+        # Update parents of copied objects before performing any modifications;
+        # otherwise the transforms may not propagate to children properly
+        for (orig, obj) in ordered_copies:
+            self.update_hierarchy(context, copies, orig, obj)
 
         trace(f'Applying transforms:')
         for (orig, obj) in ordered_copies:
