@@ -1499,6 +1499,22 @@ class LSMeshProperties(PropertyGroup):
         name="Impostor",
         default = False
         )
+    cloth_physics: BoolProperty(
+        name="Cloth Physics",
+        default = False
+        )
+    cloth_flag1: BoolProperty(
+        name="Cloth Flag 1",
+        default = False
+        )
+    cloth_flag2: BoolProperty(
+        name="Cloth Flag 2",
+        default = False
+        )
+    cloth_flag4: BoolProperty(
+        name="Cloth Flag 4",
+        default = False
+        )
     export_order: IntProperty(
         name="Export Order",
         min = 0,
@@ -1561,6 +1577,10 @@ class OBJECT_PT_LSPropertyPanel(Panel):
             row.prop(props, "spring")
             row.prop(props, "occluder")
             row.prop(props, "impostor")
+            row.prop(props, "cloth_physics")
+            row.prop(props, "cloth_flag1")
+            row.prop(props, "cloth_flag2")
+            row.prop(props, "cloth_flag4")
 
             layout.prop(props, "lod")
             layout.prop(props, "lod_distance")
@@ -1588,7 +1608,7 @@ class SCENE_PT_LSPropertyPanel(Panel):
 class ColladaMetadataLoader:
     root = None
     SCHEMA = "{http://www.collada.org/2005/11/COLLADASchema}"
-    LSLIB_METADATA_VERSION = 1
+    LSLIB_METADATA_VERSION = 2
 
     TAG_TO_GAME = {
         "DivinityOriginalSin": "dos",
@@ -1653,6 +1673,16 @@ class ColladaMetadataLoader:
                     props.spring = True
                 elif ele.text == 'Occluder':
                     props.occluder = True
+                elif ele.text == 'ClothPhysics':
+                    props.cloth_physics = True
+                elif ele.text == 'Cloth01':
+                    props.cloth_flag1 = True
+                elif ele.text == 'Cloth02':
+                    props.cloth_flag2 = True
+                elif ele.text == 'Cloth04':
+                    props.cloth_flag4 = True
+                else:
+                    report("Unrecognized DivModelType in mesh profile: " + ele.text)
             elif tag == 'IsImpostor' and ele.text == '1':
                 props.impostor = True
             elif tag == 'ExportOrder':

@@ -550,6 +550,14 @@ class DaeExporter:
                 self.writel(S_GEOM, 5, "<DivModelType>Spring</DivModelType>")
             if ls_props.occluder:
                 self.writel(S_GEOM, 5, "<DivModelType>Occluder</DivModelType>")
+            if ls_props.cloth_physics:
+                self.writel(S_GEOM, 5, "<DivModelType>ClothPhysics</DivModelType>")
+            if ls_props.cloth_flag1:
+                self.writel(S_GEOM, 5, "<DivModelType>Cloth01</DivModelType>")
+            if ls_props.cloth_flag2:
+                self.writel(S_GEOM, 5, "<DivModelType>Cloth02</DivModelType>")
+            if ls_props.cloth_flag4:
+                self.writel(S_GEOM, 5, "<DivModelType>Cloth04</DivModelType>")
             if ls_props.impostor:
                 self.writel(S_GEOM, 5, "<IsImpostor>1</IsImpostor>")
 
