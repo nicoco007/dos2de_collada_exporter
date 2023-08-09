@@ -1772,7 +1772,10 @@ class DIVINITYEXPORTER_OT_import_collada(Operator, ImportHelper):
         else:
             collada_path = input_path
 
-        bpy.ops.wm.collada_import(filepath=str(collada_path), custom_normals=True, fix_orientation=True)
+        if bpy.app.version >= (3, 4, 0):
+            bpy.ops.wm.collada_import(filepath=str(collada_path), custom_normals=True, fix_orientation=True)
+        else:
+            bpy.ops.wm.collada_import(filepath=str(collada_path), fix_orientation=True)
 
         meta_loader = ColladaMetadataLoader()
         meta_loader.load(context, str(collada_path))
