@@ -808,6 +808,15 @@ class DaeExporter:
             self.export_armature_bone(c, il, si)
 
         if (is_ctrl_bone is False):
+            # LSLib bone extra data
+            if self.config["extra_data_disabled"] == False:
+                self.writel(S_NODES, il+1, "<extra>")
+                self.writel(S_NODES, il+2, "<technique profile=\"LSTools\">")
+                ls_props = bone.ls_properties
+                if ls_props.export_order != 0:
+                    self.writel(S_NODES, il+3, "<BoneIndex>" + str(ls_props.export_order - 1) + "</BoneIndex>")
+                self.writel(S_NODES, il+2, "</technique>")
+                self.writel(S_NODES, il+1, "</extra>")
             il -= 1
             self.writel(S_NODES, il, "</node>")
 

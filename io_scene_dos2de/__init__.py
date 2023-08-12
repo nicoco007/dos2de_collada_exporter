@@ -1541,6 +1541,13 @@ class LSArmatureProperties(PropertyGroup):
         default = ""
         )
 
+class LSBoneProperties(PropertyGroup):
+    export_order: IntProperty(
+        name="Export Order",
+        description="Index of bone in the exported .GR2 file; must match bone order of the reference skeleton",
+        default = 0
+        )
+
 class LSSceneProperties(PropertyGroup):
     game: EnumProperty(
         name="Game",
@@ -1590,6 +1597,18 @@ class OBJECT_PT_LSPropertyPanel(Panel):
             layout.prop(props, "skeleton_resource_id")
 
 
+class BONE_PT_LSPropertyPanel(Panel):
+    bl_label = "DOS2/BG3 Settings"
+    bl_idname = "BONE_PT_ls_property_panel"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "bone"
+    
+    def draw(self, context):
+        layout = self.layout
+        props = context.active_bone.ls_properties
+        layout.prop(props, "export_order")
+
 
 class SCENE_PT_LSPropertyPanel(Panel):
     bl_label = "DOS2/BG3 Settings"
@@ -1607,8 +1626,9 @@ class SCENE_PT_LSPropertyPanel(Panel):
 
 class ColladaMetadataLoader:
     root = None
+    armature = None
     SCHEMA = "{http://www.collada.org/2005/11/COLLADASchema}"
-    LSLIB_METADATA_VERSION = 2
+    LSLIB_METADATA_VERSION = 3
 
     TAG_TO_GAME = {
         "DivinityOriginalSin": "dos",
@@ -1699,6 +1719,37 @@ class ColladaMetadataLoader:
             settings = geom.find(f"{self.SCHEMA}mesh/{self.SCHEMA}extra/{self.SCHEMA}technique[@profile='LSTools']")
             if settings is not None:
                 self.load_mesh_profile(geom, settings)
+    
+    def load_bone_profile(self, bone, settings):
+        bones = [b for b in self.armature.data.bones if b.name == bone.attrib['name']] 
+        if len(bones) == 0:
+            report("Couldnt load metadata on bone '" + bone.attrib['name'] + "' (object not found)", "ERROR")
+            return
+        
+        bone = bones[0]
+        props = bone.ls_properties
+        for ele in list(settings):
+            _, _, tag = ele.tag.rpartition('}')
+            if tag == 'BoneIndex':
+                props.export_order = int(ele.text) + 1
+            else:
+                report("Unrecognized attribute in bone profile: " + tag)
+    
+    def load_bone_profiles(self, bone):
+        for child in bone:
+            if child.tag == f"{self.SCHEMA}node":
+                self.load_bone_profiles(child)
+
+        if 'type' in bone.attrib and bone.attrib['type'] == 'JOINT':
+            settings = bone.find(f"{self.SCHEMA}extra/{self.SCHEMA}technique[@profile='LSTools']")
+            if settings is not None:
+                self.load_bone_profile(bone, settings)
+    
+    def load_armature_profiles(self):
+        for scene in self.root.findall(f"./{self.SCHEMA}library_visual_scenes/{self.SCHEMA}visual_scene"):
+            for ele in scene:
+                if ele.tag == f"{self.SCHEMA}node":
+                    self.load_bone_profiles(ele)
 
     def load_anim_profile(self, context, anim_settings):
         skel = anim_settings.find('SkeletonResourceID')
@@ -1712,10 +1763,16 @@ class ColladaMetadataLoader:
                 props.skeleton_resource_id = skeleton_id
     
     def load(self, context, collada_path):
+        for obj in context.scene.objects:
+            if obj.select_get() and obj.type == 'ARMATURE':
+                self.armature = obj
+                break
+
         self.root = et.parse(collada_path).getroot()
         self.load_root_profile(context)
         anim_settings = self.find_anim_settings()
         self.load_mesh_profiles()
+        self.load_armature_profiles()
         if anim_settings is not None:
             self.load_anim_profile(context, anim_settings)
 
@@ -1806,8 +1863,10 @@ classes = (
     DIVINITYEXPORTER_AddonPreferences,
     LSMeshProperties,
     LSArmatureProperties,
+    LSBoneProperties,
     LSSceneProperties,
     OBJECT_PT_LSPropertyPanel,
+    BONE_PT_LSPropertyPanel,
     SCENE_PT_LSPropertyPanel
 )
 
@@ -1820,6 +1879,7 @@ def register():
 
     bpy.types.Mesh.ls_properties = PointerProperty(type=LSMeshProperties)
     bpy.types.Armature.ls_properties = PointerProperty(type=LSArmatureProperties)
+    bpy.types.Bone.ls_properties = PointerProperty(type=LSBoneProperties)
     bpy.types.Scene.ls_properties = PointerProperty(type=LSSceneProperties)
 
     wm = bpy.context.window_manager
@@ -1839,6 +1899,7 @@ def unregister():
         bpy.utils.unregister_class(cls)
 
     del bpy.types.Scene.ls_properties
+    del bpy.types.Bone.ls_properties
     del bpy.types.Armature.ls_properties
     del bpy.types.Mesh.ls_properties
 
