@@ -278,7 +278,7 @@ class Divine_ExportSettings(PropertyGroup):
     )
     deduplicate_vertices: BoolProperty(
         name="Deduplicate Vertices",
-        default=True
+        default=False
     )
     deduplicate_uvs: BoolProperty(
         name="Deduplicate UVs",

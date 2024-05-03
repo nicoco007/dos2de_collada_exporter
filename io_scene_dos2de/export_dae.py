@@ -51,7 +51,8 @@ S_ANIM = 12
 S_SCENE = 13
 S_EXTRA = 14
 
-CMP_EPSILON = 0.0001
+# FP32 epsilon https://en.wikipedia.org/wiki/Machine_epsilon
+CMP_EPSILON = 2 ** -23
 
 
 def snap_tup(tup):
@@ -114,38 +115,15 @@ class DaeExporter:
     class Vertex:
 
         def close_to(self, v):
-            if self.vertex - v.vertex.length() > CMP_EPSILON:
+            if (self.vertex - v.vertex).length > CMP_EPSILON:
                 return False
-            if self.normal - v.normal.length() > CMP_EPSILON:
-                return False
-            if self.uv - v.uv.length() > CMP_EPSILON:
-                return False
-            if self.uv2 - v.uv2.length() > CMP_EPSILON:
-                return False
+            for a, b in zip(self.uv, v.uv):
+                if (a - b).length > CMP_EPSILON:
+                    return False
 
             return True
 
-        def get_tup(self):
-            tup = (self.vertex.x, self.vertex.y, self.vertex.z, self.normal.x,
-                   self.normal.y, self.normal.z)
-            for t in self.uv:
-                tup = tup + (t.x, t.y)
-            if self.color is not None:
-                tup = tup + (self.color.x, self.color.y, self.color.z)
-            if self.tangent is not None:
-                tup = tup + (self.tangent.x, self.tangent.y, self.tangent.z)
-            if self.bitangent is not None:
-                tup = tup + (self.bitangent.x, self.bitangent.y,
-                             self.bitangent.z)
-            for t in self.bones:
-                tup = tup + (float(t), )
-            for t in self.weights:
-                tup = tup + (float(t), )
-
-            return tup
-
-        __slots__ = ("vertex", "normal", "tangent", "bitangent", "color", "uv",
-                     "uv2", "bones", "weights")
+        __slots__ = ("vertex", "normal", "tangent", "bitangent", "color", "uv", "bones", "weights")
 
         def __init__(self):
             self.vertex = Vector((0.0, 0.0, 0.0))
@@ -154,7 +132,6 @@ class DaeExporter:
             self.bitangent = None
             self.color = None
             self.uv = []
-            self.uv2 = Vector((0.0, 0.0))
             self.bones = []
             self.weights = []
 
@@ -249,6 +226,8 @@ class DaeExporter:
             mesh.calc_normals_split()
             has_tangents = False
 
+        vertices = [None for v in mesh.vertices]
+
         for fi in range(len(mesh.polygons)):
             f = mesh.polygons[fi]
 
@@ -308,17 +287,12 @@ class DaeExporter:
                         v.bones.append(0)
                         v.weights.append(1)
 
-                tup = v.get_tup()
-                idx = 0
-                # Do not optmize if using shapekeys
-                if tup in vertex_map:
-                    idx = vertex_map[tup]
+                if vertices[ml.vertex_index] is None or vertices[ml.vertex_index].close_to(v):
+                    vi.append(ml.vertex_index)
+                    vertices[ml.vertex_index] = v
                 else:
-                    idx = len(vertices)
+                    vi.append(len(vertices))
                     vertices.append(v)
-                    vertex_map[tup] = idx
-
-                vi.append(idx)
 
             if (len(vi) > 2):  # Only triangles and above
                 indices.append(vi)
